@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# rada-status: what a starting agent needs from git, in one call.
+# Optional tooling for rada-anchor/2; the protocol works without it.
+#
+# Usage: rada-status [repo]
+#   repo: the repository that holds HANDOFF.md (default: the current directory).
+#   Pass an absolute path: an agent's working directory need not be the repository.
+#
+# Prints the anchor (the newest commit whose trailers include "Rada: end") with
+# its host, the commits after it, uncommitted changes, the size of HANDOFF.md,
+# and the same delta for every other repository named by the anchor's
+# "Rada-Repo: <hash> <path>" trailers (paths are absolute or start with ~/).
+set -u
+set -f
+
+top=$(git -C "${1:-.}" rev-parse --show-toplevel 2>/dev/null) || {
+	echo "rada-status: '${1:-.}' is not inside a git repository; pass the repository that holds HANDOFF.md" >&2
+	exit 2
+}
+cd "$top" || exit 2
+
+show() { # run a command; print "(none)" if it prints nothing
+	local out
+	out=$("$@") || return
+	if [ -n "$out" ]; then printf '%s\n' "$out"; else echo "(none)"; fi
+}
+
+branch=$(git symbolic-ref -q --short HEAD || echo "DETACHED")
+echo "repo: $top (branch: $branch)"
+[ -f HANDOFF.md ] && echo "HANDOFF.md: $(wc -m < HANDOFF.md) characters (limit 8000)"
+
+if ! git rev-parse -q --verify HEAD >/dev/null; then
+	echo "anchor: none (the repository has no commits yet)"
+	exit 0
+fi
+
+anchor=$(git log --format='%h%x09%(trailers:key=Rada,valueonly,separator=%x2C)' |
+	awk -F'\t' 'tolower($2) ~ /(^|,)[ \t]*end[ \t]*(,|$)/ { print $1; exit }')
+
+if [ -z "$anchor" ]; then
+	[ "$(git rev-parse --is-shallow-repository)" = true ] &&
+		echo "shallow clone: the anchor may be older than the history here; run git fetch --unshallow"
+	echo "anchor: none (no commit with 'Rada: end' yet: adopt, or read the last 20 commits)"
+	git log -20 --format='%h %cI %s'
+else
+	host=$(git log -1 --format='%(trailers:key=Rada-Host,valueonly,separator=%x2C)' "$anchor")
+	echo "anchor: $(git log -1 --format='%h %cI %s' "$anchor") (host: ${host:-?})"
+	echo "--- after the anchor"
+	show git log --format='%h %cI %s' "$anchor..HEAD"
+fi
+echo "--- uncommitted"
+show git status --short
+
+[ -n "$anchor" ] || exit 0
+git log -1 --format='%(trailers:key=Rada-Repo,valueonly,separator=%x0A)' "$anchor" |
+while read -r head path; do
+	[ -n "$head" ] || continue
+	path=${path/#\~/$HOME}
+	echo "=== $path (at the anchor: $head)"
+	if [ -z "$path" ] || ! git -C "$path" rev-parse --git-dir >/dev/null 2>&1; then
+		echo "missing, or not a git repository"
+		continue
+	fi
+	if ! git -C "$path" rev-parse -q --verify "$head^{commit}" >/dev/null; then
+		echo "unknown commit $head (history rewritten?); the last 10 commits:"
+		git -C "$path" log -10 --format='%h %cI %s'
+		continue
+	fi
+	git -C "$path" merge-base --is-ancestor "$head" HEAD ||
+		echo "note: $head is not an ancestor of HEAD (history rewritten, or another branch is checked out)"
+	echo "--- after the anchor"
+	show git -C "$path" log --format='%h %cI %s' "$head..HEAD"
+	echo "--- uncommitted"
+	show git -C "$path" status --short
+done
