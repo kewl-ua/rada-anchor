@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# rada-lint: mechanical checks of HANDOFF.md and JOURNAL.md (rada-anchor/2, card 2.1). Optional tooling.
+#
+# Usage: rada-lint [--staged] [repo]    (repo: the one that holds HANDOFF.md; default: the current directory)
+#   --staged: check the handoff files as they are staged for the commit (git's index), as the
+#             pre-commit hook does, not as they are in the working tree.
+#
+# Checks HANDOFF.md:
+#   - at most 8,000 characters;
+#   - every record line (- C12 · ..., also O D A N X) at most 300 characters, not indented;
+#   - no id twice; every X names an O that is there;
+#   - next_ids above every id in use, in the file and in the messages of the commits after the anchor.
+# Checks RA-10 (nothing that looks like a secret) in HANDOFF.md, and in the lines added to JOURNAL.md
+# (old journal entries are history and are not checked). Found values are never printed.
+#
+# Prints one line per problem and exits 1 if there is any; prints nothing and exits 0 otherwise.
+# Needs bash 4 or later and a C.UTF-8 locale (for counting characters).
+set -u
+export LC_ALL=C.UTF-8 GIT_OPTIONAL_LOCKS=0
+((BASH_VERSINFO[0] >= 4)) || { echo "rada-lint: needs bash 4 or later; skipped" >&2; exit 0; }
+
+staged=
+case ${1:-} in
+	-h | --help) sed -n '2,/^set -u/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
+	--staged) staged=1; shift ;;
+	-*) echo "rada-lint: unknown option $1 (usage: rada-lint [--staged] [repo])" >&2; exit 2 ;;
+esac
+[ $# -le 1 ] || { echo "rada-lint: usage: rada-lint [--staged] [repo]" >&2; exit 2; }
+top=$(git -C "${1:-.}" rev-parse --show-toplevel 2>/dev/null) || {
+	echo "rada-lint: '${1:-.}' is not inside a git repository" >&2
+	exit 2
+}
+cd "$top" || exit 2
+
+# the text of a handoff file: staged or in the working tree
+text() {
+	if [ -n "$staged" ]; then git show ":$1" 2>/dev/null; else cat "$1" 2>/dev/null; fi
+}
+handoff=$(text HANDOFF.md) || true
+[ -n "$handoff" ] || { echo "rada-lint: no HANDOFF.md in $top" >&2; exit 2; }
+
+problems=0
+say() { echo "rada-lint: $*"; problems=$((problems + 1)); }
+
+size=$(printf '%s\n' "$handoff" | wc -m)
+[ "$size" -le 8000 ] || say "HANDOFF.md has $size characters (at most 8000)"
+
+declare -A seen maxid ohave
+xrefs=()
+while IFS= read -r line; do
+	line=${line%$'\r'}
+	if [[ $line =~ ^[[:space:]]+-\ ([CODANX][0-9]+)\ · ]]; then
+		say "${BASH_REMATCH[1]} is indented: records are top-level lines (- ${BASH_REMATCH[1]} · ...)"
+	fi
+	[[ $line =~ ^-\ ([CODANX])([0-9]+)\ · ]] || continue
+	type=${BASH_REMATCH[1]} num=$((10#${BASH_REMATCH[2]})) id=${BASH_REMATCH[1]}$((10#${BASH_REMATCH[2]}))
+	len=$(printf '%s' "$line" | wc -m)
+	[ "$len" -le 300 ] || say "$id is $len characters long (at most 300)"
+	[ -z "${seen[$id]:-}" ] || say "$id appears twice"
+	seen[$id]=1
+	[ "$type" = O ] && ohave[$id]=1
+	if [ "$type" = X ]; then
+		[[ $line =~ \((O[0-9]+)\)[[:space:]]*$ ]] && xrefs+=("$id:${BASH_REMATCH[1]}") || say "$id does not end with its (O<n>)"
+	fi
+	[ "$num" -le "${maxid[$type]:-0}" ] || maxid[$type]=$num
+done <<< "$handoff"
+for ref in ${xrefs[@]+"${xrefs[@]}"}; do
+	[ -n "${ohave[${ref#*:}]:-}" ] || say "${ref%%:*} belongs to ${ref#*:}, which is not in Open: delete it with its O, or move it to the guide"
+done
+
+# ids named in the commits after the anchor count too (a shift may have used and closed one)
+anchor=$(git log --format='%h%x09%(trailers:key=Rada,valueonly,separator=%x2C)' 2>/dev/null |
+	awk -F'\t' 'tolower($2) ~ /(^|,)[ \t]*end[ \t]*(,|$)/ { print $1; exit }')
+if [ -n "$anchor" ]; then
+	for id in $(git log --format=%B "$anchor..HEAD" | grep -oE '\b[CODANX][0-9]+\b' | sort -u); do
+		type=${id:0:1} num=$((10#${id:1}))
+		[ "$num" -le "${maxid[$type]:-0}" ] || maxid[$type]=$num
+	done
+fi
+
+next=$(printf '%s\n' "$handoff" | grep -o 'next_ids: *{[^}]*}' | head -1)
+if [ -z "$next" ]; then
+	say "no next_ids in HANDOFF.md"
+else
+	for type in "${!maxid[@]}"; do
+		value=$(printf '%s' "$next" | grep -o "$type: *[0-9]*" | grep -o '[0-9]*$')
+		if [ -z "$value" ]; then
+			say "next_ids has no counter for $type (set it to $((maxid[$type] + 1)))"
+		elif [ "$((10#$value))" -le "${maxid[$type]}" ]; then
+			say "next_ids $type is $value, but $type${maxid[$type]} is in use (set it to $((maxid[$type] + 1)) or more)"
+		fi
+	done
+fi
+
+# RA-10: things that look like secrets. Only values that mix letters and digits count, so
+# "secret: /etc/app.env", "token: \$DEPLOY_TOKEN" or "password: rotated" (where a secret lives) pass.
+patterns='-----BEGIN [A-Z ]*PRIVATE KEY-----|AKIA[0-9A-Z]{16}|\bsk-[A-Za-z0-9_-]{20,}|\bgh[pousr]_[A-Za-z0-9]{30,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}'
+patterns+="|\\b(password|passwd|pwd|secret|token|api[_-]?key)\\b *[:=] *[\"']?([A-Za-z0-9+_.-]*[0-9][A-Za-z0-9+_.-]*[A-Za-z]|[A-Za-z0-9+_.-]*[A-Za-z][A-Za-z0-9+_.-]*[0-9])[A-Za-z0-9+_.-]{4,}"
+secrets() { # $1 = file name, text on stdin; prints the line numbers of hits
+	grep -nEio -- "$patterns" | cut -d: -f1 | sort -un | while IFS= read -r n; do
+		echo "rada-lint: $1:$n: looks like a secret (RA-10); write where it lives, not the value"
+	done
+}
+hits=$(printf '%s\n' "$handoff" | secrets HANDOFF.md)
+if [ -n "$staged" ]; then
+	added=$(git diff --cached -U0 -- JOURNAL.md | grep '^+' | grep -v '^+++' | cut -c2-)
+else
+	added=$(git diff HEAD -U0 -- JOURNAL.md 2>/dev/null | grep '^+' | grep -v '^+++' | cut -c2-)
+fi
+[ -z "$added" ] || hits+=$(printf '%s\n' "$added" | secrets "JOURNAL.md (added lines)")
+if [ -n "$hits" ]; then
+	printf '%s\n' "$hits"
+	problems=$((problems + 1))
+fi
+
+[ "$problems" -eq 0 ]

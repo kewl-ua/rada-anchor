@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# pre-commit hook (rada-anchor/2, card 2.1, optional): lint the handoff files a commit stages.
+# Install as a link, so the hook finds rada-lint next to its target:
+#   ln -s <rada-anchor checkout>/tools/pre-commit <repo>/.git/hooks/pre-commit
+if git diff --cached --name-only | grep -qxE 'HANDOFF\.md|JOURNAL\.md'; then
+	here=$(dirname "$(readlink -f "$0")")
+	[ -x "$here/rada-lint" ] || {
+		echo "rada: rada-lint not found next to $(readlink -f "$0"): link this hook (ln -s), do not copy it. Check skipped." >&2
+		exit 0
+	}
+	"$here/rada-lint" --staged "$(git rev-parse --show-toplevel)" || {
+		echo "rada: fix the staged HANDOFF.md / JOURNAL.md first (see above). A problem you did not make: fix it in the same commit (RA-1)." >&2
+		exit 1
+	}
+fi
+exit 0

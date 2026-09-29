@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# rada-agents-md: put the rules card into a repository's AGENTS.md (rada-anchor/2, card 2.1; optional).
+#
+# Usage: rada-agents-md <repo> <lines-file>
+#
+# Codex, Cursor, Copilot, Gemini CLI and other agents load AGENTS.md from the repository by
+# themselves, but they have no @-import. This writes a block into <repo>/AGENTS.md, between
+# the markers below, holding the lines-file (the project's lines from
+# template/agent-instructions.md: phrases, start command; its @-import line is left out) and
+# the text of RULES.md next to this script. Run it again after moving to a new card: it
+# replaces the block in place. Everything outside the markers is left as it is. Commit
+# AGENTS.md yourself.
+#
+# Claude Code reads CLAUDE.md and, when one exists, ignores AGENTS.md: keep its @-import there.
+set -eu
+case ${1:-} in -h | --help) sed -n '2,/^set -eu/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;; esac
+[ $# -ge 2 ] || { echo "usage: rada-agents-md <repo> <lines-file> (your lines from template/agent-instructions.md)" >&2; exit 2; }
+repo=$1
+lines=$2
+[ -f "$lines" ] || { echo "rada-agents-md: no file $lines" >&2; exit 2; }
+here=$(dirname "$(readlink -f "$0")")
+card="$here/../RULES.md"
+[ -f "$card" ] || { echo "rada-agents-md: no RULES.md at $card" >&2; exit 2; }
+target="$repo/AGENTS.md"
+[ -L "$target" ] && { echo "rada-agents-md: $target is a symlink; edit the file it points to" >&2; exit 1; }
+if [ -f "$target" ] && grep -q '^<!-- rada-anchor:begin' "$target" && ! grep -q '^<!-- rada-anchor:end -->' "$target"; then
+	echo "rada-agents-md: $target has the begin marker but no end marker; fix it by hand" >&2
+	exit 1
+fi
+
+block=$(mktemp)
+trap 'rm -f "$block"' EXIT
+{
+	echo "<!-- rada-anchor:begin (written by rada-agents-md; edit the sources, not this block) -->"
+	grep -v '^@' "$lines"
+	echo
+	cat "$card"
+	echo "<!-- rada-anchor:end -->"
+} > "$block"
+
+if [ -f "$target" ] && grep -q '^<!-- rada-anchor:begin' "$target"; then
+	awk -v blockfile="$block" '
+		/^<!-- rada-anchor:begin/ { while ((getline l < blockfile) > 0) print l; skip = 1; next }
+		/^<!-- rada-anchor:end -->/ { skip = 0; next }
+		!skip' "$target" > "$target.tmp"
+	mv "$target.tmp" "$target"
+else
+	{ [ -f "$target" ] && { cat "$target"; echo; }; cat "$block"; } > "$target.tmp"
+	mv "$target.tmp" "$target"
+fi
+echo "rada-agents-md: wrote the rules card into $target"

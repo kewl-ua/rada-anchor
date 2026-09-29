@@ -8,12 +8,12 @@ current state; an anchor commit in git marks what has been handed over.
 
 | | |
 |---|---|
-| Version | `rada-anchor/2` (v1: tag [`v1`](../../tree/v1)) |
+| Version | `rada-anchor/2`, card 2.1 (v1: tag [`v1`](../../tree/v1)) |
 | Origin | devised while building [QLadder](https://qladder.com), a ladder and lobby server for Cossacks 3 |
 | Scope | several agents, or one agent in several sessions, on one repository |
 | The rules | [RULES.md](RULES.md): the card every session loads |
 | Templates | [template/HANDOFF.md](template/HANDOFF.md), [template/JOURNAL.md](template/JOURNAL.md), [template/agent-instructions.md](template/agent-instructions.md) |
-| Tooling (optional) | [tools/rada-status](tools/rada-status) |
+| Tooling (optional) | [tools/](tools/): `rada-status`, `rada-lint`, git hooks, `rada-agents-md`; [adapters/claude-code](adapters/claude-code/) |
 
 ## Why
 
@@ -118,6 +118,27 @@ repositories. That test is where the exact end-commit command, the rebuilt
 entry as an end commit, the eager `next_ids` and the shared-tree rules came
 from.
 
+## What 2.1 adds, from the analogues
+
+After v2, agents surveyed similar projects: handoff files, session capture,
+agent task trackers, AGENTS.md, vendor memory. None of them derives the
+anchor, rebuilds a missed shift, keeps the user's decisions and questions
+as records, or tracks other repositories. Several did something better,
+and 2.1 takes it, all of it optional and additive. One new convention comes
+with the hooks: only end commits start with `Handoff: `.
+
+2.1 was acted out on scratch repositories by agents, like v2, before
+release.
+
+| From | 2.1 |
+|---|---|
+| Hooks that save or load state automatically (Anthropic's long-running harness, Entire, coding-agent-toolkit) | `adapters/claude-code/rada-hook` feeds `rada-status` output to a new session (the start command still runs at the start phrase), and lists what came in since a resumed session's last turn |
+| Checks with expected values that the next session re-runs (coding-agent-toolkit) | Live values may carry `# check: <command> => <expected>`; `rada-status --checks` runs them (shell commands from the file: keep them read-only) |
+| A record for rejected options (Handoff Protocol's "Excluded") | `X` records: what the agents tried or weighed and ruled out, and why, while their O is open (the user's own "no" stays a D) |
+| Leases that expire (MCP Agent Mail) | `claim_ttl` in the Profile, optional: a claim whose time and the newest commit after the anchor are both older than it is cleared at the next start |
+| AGENTS.md, which most agents load by themselves | `tools/rada-agents-md` writes the card, with your lines, into a repository's `AGENTS.md` |
+| Secret filters and mechanical checks (Handoff Protocol, llm-handoff) | RA-10 (no secrets in the handoff files), `tools/rada-lint`, and the `pre-commit` and `commit-msg` hooks. The latter refuses an end commit whose `Rada: end` git would not see, or that lacks `Rada-Host` or a `Rada-Repo`. |
+
 ## How a shift goes
 
 ```mermaid
@@ -141,12 +162,12 @@ start and stays within 8,000 characters (`wc -m`). Sections, in this order:
 
 | Section | Holds |
 |---|---|
-| Profile | host ids, the branch, languages, the other repositories |
+| Profile | host ids, the branch, `claim_ttl` (optional), languages, the other repositories |
 | Live | a YAML block of what runs and from which commit, the tests with the commit they ran at, `next_ids` |
 | Claims | `C` lines, one per session |
 | Asks | `A` lines: what only the user can do or answer |
 | Notes | `N` lines: warnings about the current state, each with what ends it |
-| Open | `O` lines: open work with its state and next step |
+| Open | `O` lines: open work with its state and next step, and `X` lines: options ruled out for it |
 | Decisions | `D` lines: the user's decisions in force |
 
 A record is one line of at most 300 characters:
@@ -157,6 +178,7 @@ A record is one line of at most 300 characters:
 - D4 · Sign-in with Steam only · 2026-09-24
 - A2 · Pick the seeding rule for the draw · since 2026-09-29 (O7)
 - N3 · The demo database is mid-migration: do not restart demo · until O7 is deployed
+- X2 · Redis for the draw cache · the demo box has 512 MB · 2026-09-29 (O7)
 ```
 
 - **Ids are never reused.** `next_ids` holds the next free number of each
@@ -245,7 +267,7 @@ Rada-Repo: 7bc4ea3c02d4 ~/spec
 
 ## The rules
 
-The normative text is [RULES.md](RULES.md): nine invariants, the records
+The normative text is [RULES.md](RULES.md): ten invariants, the records
 and when each is deleted, the journal headings, and the adopt, start,
 during and end steps. In short:
 
@@ -256,6 +278,8 @@ during and end steps. In short:
     are not yours, and name them in the report;
   - read the delta, and rebuild a missing shift as an end commit of its own,
     unless a claim that may be alive covers it;
+  - with `claim_ttl` set, clear expired claims even when the tree holds
+    their changes, leaving the changes alone and asking the user about them;
   - claim;
   - report in two or three lines.
 - **During:**
@@ -317,6 +341,13 @@ sessions see each other's uncommitted changes and share git's index.
    facts). The handoff file says what is going on; the guide says how
    things are.
 4. Make the first end commit (RULES.md, Adopt). It is the first anchor.
+5. Optional:
+   - link the git hooks:
+     `ln -s ~/.rada/v2/tools/pre-commit ~/.rada/v2/tools/commit-msg <repo>/.git/hooks/`
+     (`rada-lint` needs bash 4 or later and a C.UTF-8 locale);
+   - register the Claude Code hook ([adapters/claude-code](adapters/claude-code/));
+   - for agents that read AGENTS.md, run
+     `tools/rada-agents-md <repo> <file with your lines from template/agent-instructions.md>`.
 
 It needs git 2.32 or later, for `git commit --trailer`.
 
@@ -337,10 +368,25 @@ It needs git 2.32 or later, for `git commit --trailer`.
    plus the `Rada: end` trailers. `JOURNAL.md` is new, so `git add` it in
    the same command.
 
+### From card 2.0 to 2.1
+
+A project on 2.0 keeps working. To use 2.1:
+
+1. Move the checkout: `git -C ~/.rada/src fetch --tags && git -C ~/.rada/v2 checkout --detach v2.1`.
+2. Add `X: 1` to `next_ids`, and point the header's rules link at
+   `blob/v2.1/RULES.md`. Optionally, add `claim_ttl: 12h` to the Profile.
+3. Add `--checks` to the start command, and checks to Live values where a
+   command can verify them.
+4. Optionally, link the git hooks and register the Claude Code hook.
+
+Commit it as a `State:` commit that names the card, for example
+`State: card 2.1`.
+
 ## Changing the rules
 
 The card is versioned in this repository, and releases are tags (`v1`,
-`v2`). A project names the version it follows in its `HANDOFF.md` title,
+`v2`, `v2.1`). A minor card gets its own tag, and the checkout keeps its
+path (`~/.rada/v2`). A project names the version it follows in its `HANDOFF.md` header,
 and its agents import the card from a checkout of that tag. Whoever changes
 the rules raises the version, tags it, moves the checkout, and says what
 changed in the journal entry.

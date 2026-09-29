@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# commit-msg hook (rada-anchor/2, card 2.1, optional): an end commit must carry its trailers.
+# Install: ln -s <rada-anchor checkout>/tools/commit-msg <repo>/.git/hooks/commit-msg
+#
+# Only end commits have a subject starting with "Handoff: " (RULES.md). Git reads trailers only from
+# the last paragraph, so a blank line before Co-Authored-By, or a line of prose in the block, hides
+# "Rada: end" and the shift looks unhanded. This refuses such a commit, and one that lacks Rada-Host
+# or a Rada-Repo for a repository the Profile lists.
+msg=${1:?}
+subject=$(sed -n '/^#/!{p;q}' "$msg")
+case $subject in
+	"Handoff: "*) ;;
+	*) exit 0 ;;
+esac
+hint() {
+	echo "rada: a subject starting with \"Handoff: \" marks an end commit (RULES.md, End 4)." >&2
+	echo "rada: if the shift is not ending, use another subject (\"State: ...\", \"Claim C<n> ...\")." >&2
+	echo "rada: if it is: git commit -m \"Handoff: ...\" --trailer \"Rada: end\" --trailer \"Rada-Host: <host>\" --trailer \"Rada-Repo: <12-char HEAD> <path>\" (one per repo in the Profile) -- HANDOFF.md JOURNAL.md" >&2
+	exit 1
+}
+trailers=$(git interpret-trailers --parse < "$msg")
+printf '%s\n' "$trailers" | grep -qi '^Rada: *end *$' || { echo "rada: no \"Rada: end\" in the message's last paragraph." >&2; hint; }
+printf '%s\n' "$trailers" | grep -qi '^Rada-Host: *[^ ]' || { echo "rada: no \"Rada-Host: <host>\" trailer." >&2; hint; }
+# the Profile's other repositories: backquoted paths on the "- repos:" line, unless it says none
+top=$(git rev-parse --show-toplevel)
+repos=$(git show :HANDOFF.md 2>/dev/null | grep -m1 '^- repos:' | grep -o '`[~/][^`]*`' | wc -l)
+given=$(printf '%s\n' "$trailers" | grep -ci '^Rada-Repo: *[0-9a-f]')
+if [ "$repos" -gt "$given" ]; then
+	echo "rada: the Profile lists $repos other repositories, the message has $given Rada-Repo trailers." >&2
+	hint
+fi
+exit 0

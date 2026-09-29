@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""rada-hook: a Claude Code hook for rada-anchor/2, card 2.1 (optional).
+
+Usage in ~/.claude/settings.json (see README.md next to this file):
+
+    rada-hook <repo that holds HANDOFF.md>
+
+Events:
+- SessionStart: adds tools/rada-status <repo> output (the git part, as of the session's start) to
+  the context. It does not replace the start command: at the start phrase, Start 1 still runs it.
+  On resume or compact it also says what came in since the session's last turn.
+- Stop: records where every repository stands at the end of a turn (silent).
+- UserPromptSubmit: if commits came in since the end of this session's last turn, lists them and
+  says what to do (RULES.md, During). Nothing new: prints nothing, costs nothing.
+  Known gap: commits another session makes during this session's turn are recorded at Stop and not
+  reported.
+
+Subagents (an agent_id in the input) and unattended sessions are skipped, and the texts tell any
+other agent to ignore them (RA-8). The hook never writes to a repository (git runs without optional
+locks); its only state is ~/.rada/state/<session>.json.
+"""
+
+import json
+import os
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+STATUS = os.path.join(HERE, "..", "..", "tools", "rada-status")
+STATE_DIR = os.path.expanduser("~/.rada/state")
+LIMIT = 6000  # characters of context at most; Claude Code caps additionalContext at 10 000
+
+
+ENV = {**os.environ, "GIT_OPTIONAL_LOCKS": "0"}
+FOR_WHOM = " (For the session the user talks to. A subagent, workflow agent or job ignores this: RA-8.)"
+
+
+def git(repo, *args):
+    try:
+        return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, errors="replace",
+                              timeout=10, env=ENV).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def repos(main):
+    """The main repository and the ones named by its anchor's Rada-Repo trailers."""
+    out = [main]
+    log = git(main, "log", "--format=%h%x09%(trailers:key=Rada,valueonly,separator=%x2C)")
+    anchor = next((line.split("\t")[0] for line in log.splitlines()
+                   if "end" in [v.strip().lower() for v in line.partition("\t")[2].split(",")]), None)
+    if anchor:
+        for line in git(main, "log", "-1", "--format=%(trailers:key=Rada-Repo,valueonly,separator=%x0A)", anchor).splitlines():
+            parts = line.strip().split(None, 1)
+            if len(parts) == 2:
+                out.append(os.path.expanduser(parts[1]))
+    return out
+
+
+def heads(main):
+    return {r: git(r, "rev-parse", "HEAD") for r in repos(main)}
+
+
+def news(seen, now):
+    """The commits that came in since `seen` (heads per repository), as text; empty if none."""
+    lines = []
+    for repo, head in now.items():
+        old = (seen or {}).get(repo)
+        if old and head and old != head:
+            log = git(repo, "log", "--format=%h %cI %s", f"{old}..{head}") or f"(history changed: {old[:12]} -> {head[:12]})"
+            lines.append(f"{repo}:\n{log}")
+    if not lines:
+        return ""
+    return ("rada-anchor: these commits are newer than what this session saw at the end of its last turn: yours, "
+            "if that turn was interrupted; otherwise another session's or the user's. Read HANDOFF.md again before "
+            "you edit it; if your claim line is gone, claim again; if the anchor moved, read the new delta "
+            "(RULES.md, During)." + FOR_WHOM + "\n" + "\n".join(lines))
+
+
+def emit(event, text):
+    if len(text) > LIMIT:
+        text = text[:LIMIT] + "\n[... cut; run the start command for the rest]"
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": event, "additionalContext": text}}))
+
+
+def main():
+    if len(sys.argv) < 2:
+        return
+    main_repo = sys.argv[1]
+    try:
+        event = json.load(sys.stdin)
+    except ValueError:
+        return
+    if event.get("agent_id") or os.environ.get("CLAUDE_CODE_SESSION_ATTENDED") == "0":
+        return
+    name = event.get("hook_event_name", "")
+    session = event.get("session_id") or os.environ.get("CLAUDE_CODE_SESSION_ID", "unknown")
+    os.makedirs(STATE_DIR, exist_ok=True)
+    state_file = os.path.join(STATE_DIR, f"{session}.json")
+    now = heads(main_repo)
+
+    try:
+        seen = json.load(open(state_file))
+    except (OSError, ValueError):
+        seen = None
+
+    if name == "SessionStart":
+        try:
+            out = subprocess.run([STATUS, main_repo], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                 errors="replace", timeout=20, env=ENV).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            out = "(rada-status failed; run the start command)"
+        text = ("rada-anchor: rada-status at session start (the git part only). At the start phrase, still run the "
+                "start command (Start 1)." + FOR_WHOM + "\n" + out)
+        if event.get("source") in ("resume", "compact"):
+            since = news(seen, now)
+            if since:
+                text = since + "\n\n" + text
+        emit(name, text)
+    elif name == "UserPromptSubmit":
+        since = news(seen, now)
+        if since:
+            emit(name, since)
+    # Stop, and after the other events: remember where everything stands
+    with open(state_file + ".tmp", "w") as f:
+        json.dump(now, f)
+    os.replace(state_file + ".tmp", state_file)
+
+
+if __name__ == "__main__":
+    main()

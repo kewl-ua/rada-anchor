@@ -21,7 +21,7 @@ copy you edit. That way the rules change only when you move the checkout:
 
 ```
 git clone https://github.com/kewl-ua/rada-anchor ~/.rada/src
-git -C ~/.rada/src worktree add --detach ~/.rada/v2 v2
+git -C ~/.rada/src worktree add --detach ~/.rada/v2 v2.1
 ```
 
 ---
@@ -33,8 +33,10 @@ Agents work on <project> in turns and hand work over through
 
 @~/.rada/v2/RULES.md
 
-The start command, run in the same turn as reading HANDOFF.md:
-`~/.rada/v2/tools/rada-status <absolute path of the repository>; date -Iminutes; <service checks, if any>`
+The start command, run in the same turn as reading HANDOFF.md (`--checks`
+runs the Live checks, shell commands from HANDOFF.md: drop it where you do
+not trust every committer):
+`~/.rada/v2/tools/rada-status --checks <absolute path of the repository>; date -Iminutes; <service checks, if any>`
 
 The user's phrases are commands:
 - "<start phrase>", "<another>", or any greeting at the start: start a

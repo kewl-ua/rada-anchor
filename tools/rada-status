@@ -1,20 +1,35 @@
 #!/usr/bin/env bash
 # rada-status: what a starting agent needs from git, in one call.
-# Optional tooling for rada-anchor/2; the protocol works without it.
+# Optional tooling for rada-anchor/2 (card 2.1); the protocol works without it.
 #
-# Usage: rada-status [repo]
+# Usage: rada-status [--checks] [repo]
 #   repo: the repository that holds HANDOFF.md (default: the current directory).
 #   Pass an absolute path: an agent's working directory need not be the repository.
+#   --checks: also run the Live block's checks, lines with "# check: <command> => <expected>",
+#   and compare each command's first output line with the expected text. The commands come
+#   from HANDOFF.md and run through bash: use --checks only where you trust every committer,
+#   and keep checks read-only.
 #
-# Prints the anchor (the newest commit whose trailers include "Rada: end") with
-# its host, the commits after it with their full messages, uncommitted changes, the size of HANDOFF.md,
-# and the same delta for every other repository named by the anchor's
+# Prints the anchor (the newest commit whose trailers include "Rada: end") with its host, the
+# commits after it with their full messages, uncommitted changes, the claims with their age,
+# the size of HANDOFF.md, and the same delta for every other repository named by the anchor's
 # "Rada-Repo: <hash> <path>" trailers (paths are absolute or start with ~/).
+# Exit status: 0; 3 when a check mismatched; 2 on a usage error.
 set -u
 set -f
+export GIT_OPTIONAL_LOCKS=0   # read only: never take index.lock from another session
 
-top=$(git -C "${1:-.}" rev-parse --show-toplevel 2>/dev/null) || {
-	echo "rada-status: '${1:-.}' is not inside a git repository; pass the repository that holds HANDOFF.md" >&2
+run_checks= repo=
+for arg in "$@"; do
+	case $arg in
+		-h | --help) sed -n '2,/^set -u/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
+		--checks) run_checks=1 ;;
+		-*) echo "rada-status: unknown option $arg (usage: rada-status [--checks] [repo])" >&2; exit 2 ;;
+		*) [ -z "$repo" ] || { echo "rada-status: one repo only" >&2; exit 2; }; repo=$arg ;;
+	esac
+done
+top=$(git -C "${repo:-.}" rev-parse --show-toplevel 2>/dev/null) || {
+	echo "rada-status: '${repo:-.}' is not inside a git repository; pass the repository that holds HANDOFF.md" >&2
 	exit 2
 }
 cd "$top" || exit 2
@@ -51,7 +66,46 @@ fi
 echo "--- uncommitted"
 show git status --short
 
-[ -n "$anchor" ] || exit 0
+if [ -f HANDOFF.md ]; then
+	# claims with their age; "expired" only when the Profile sets claim_ttl (<n>h)
+	ttl=$(grep -m1 -o 'claim_ttl: *[0-9]*h' HANDOFF.md | grep -o '[0-9]*')
+	newest=$(git log -1 --format=%ct "${anchor:+$anchor..}HEAD" 2>/dev/null)
+	now=$(date +%s)
+	claims=$(grep -E '^- C[0-9]+ · ' HANDOFF.md | while IFS= read -r line; do
+		id=${line#- } id=${id%% *}
+		when=$(printf '%s' "$line" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:[0-9]{2})?([+-][0-9]{2}:?[0-9]{2}|Z)?' | head -1)
+		t=$(date -d "$when" +%s 2>/dev/null) || { echo "$id: no readable time"; continue; }
+		last=$t
+		[ -n "$newest" ] && [ "$newest" -gt "$last" ] && last=$newest
+		age=$(( (now - t) / 60 ))
+		state=""
+		[ -n "$ttl" ] && [ $((now - last)) -gt $((ttl * 3600)) ] &&
+			state=" EXPIRED (claim_ttl ${ttl}h, and no commit after the anchor within it)"
+		echo "$id: line written $((age / 60))h$((age % 60))m ago$state"
+	done)
+	echo "--- claims"
+	if [ -n "$claims" ]; then printf '%s\n' "$claims"; else echo "(none)"; fi
+fi
+
+status=0
+if [ -n "$run_checks" ] && [ -f HANDOFF.md ]; then
+	echo "--- Live checks"
+	results=$(awk '/^## Live/ { live = 1; next } /^## / { live = 0 } live' HANDOFF.md |
+		grep -o '# check: .* => .*$' | while IFS= read -r line; do
+		line=${line%$'\r'}
+		line=${line#\# check: }
+		cmd=${line% => *}
+		want=${line##* => }
+		want=${want%"${want##*[![:space:]]}"}
+		case $cmd in "<"*) echo "skipped: $cmd (a placeholder)"; continue ;; esac
+		got=$(set +f; timeout 20 bash -c "$cmd" </dev/null 2>&1 | head -1 | sed 's/[[:space:]]*$//')
+		if [ "$got" = "$want" ]; then echo "ok: $cmd"; else echo "MISMATCH: $cmd: expected '$want', got '$got'"; fi
+	done)
+	if [ -n "$results" ]; then printf '%s\n' "$results"; else echo "(none)"; fi
+	case $results in *MISMATCH*) status=3 ;; esac
+fi
+
+[ -n "$anchor" ] || exit $status
 git log -1 --format='%(trailers:key=Rada-Repo,valueonly,separator=%x0A)' "$anchor" |
 while read -r head path; do
 	[ -n "$head" ] || continue
@@ -73,3 +127,4 @@ while read -r head path; do
 	echo "--- uncommitted"
 	show git -C "$path" status --short
 done
+exit $status
