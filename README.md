@@ -46,19 +46,19 @@ Two halves, as the work has two sides.
 
 Version 1 was written for people to read: one file held the rules, the
 state, and a journal. After five days of QLadder, measured on its real
-`HANDOFF.md` (71 revisions, 7 shifts, 2 computers):
+`HANDOFF.md` at its last v1 handoff (71 revisions, 7 shifts, 2 computers):
 
 - **The start cost grew with the project's age, not with its open work.**
   - The file was about 33,000 characters (about 9,500 tokens), read in full
     at every start. It grew by about 1,500 tokens a day.
   - An agent needed about 1,000 tokens of it.
-  - The rules section (about 1,200 tokens) never changed, yet it was
-    re-read 66 times.
+  - The rules section (about 1,200 tokens) never changed after its first
+    hour, yet it was re-read 66 times.
   - Closed items took 1,350 tokens, and the journal 3,700.
 - **The end-of-shift ritual was the weak point.**
   - 2 of 7 shifts ended without a handoff, and the next agent rebuilt the
     entry from git. Both of those sessions were still alive, only idle.
-  - The anchor hash was written by hand and moved only 6 times in 71
+  - The anchor hash was written by hand and took only 6 values in 71
     revisions.
   - Other values copied by hand went stale too: test counts, versions,
     dates.
@@ -91,8 +91,9 @@ So v2:
 6. **Writes down only what cannot be derived**, together with the commit or
    date it was observed at.
 
-On the same QLadder state, the handoff file shrank from about 34,000 to
-about 5,000 characters. From then on it grows with open work, not with age.
+When QLadder moved to v2, its handoff file shrank from about 34,000 to
+about 5,000 characters, with the same open work. From then on it grows with
+open work, not with age.
 
 ### What v2 does not add
 
@@ -123,7 +124,7 @@ from.
 flowchart TD
     A(["the user: start phrase"]) --> B["read HANDOFF.md<br/>+ start command, in one turn"]
     B --> C{"commits after<br/>the anchor?"}
-    C -- "a shift without an end" --> R["rebuild its JOURNAL entry from git,<br/>commit it as an end commit"]
+    C -- "a shift without an end,<br/>no live claim on it" --> R["rebuild its JOURNAL entry from git,<br/>commit it as an end commit"]
     C -- "none, or only read them" --> D["claim line, commit it alone"]
     R --> D
     D --> E["tell the user in 2-3 lines<br/>(delta, deleted claims, Asks, Notes)"]
@@ -151,7 +152,7 @@ start and stays within 8,000 characters (`wc -m`). Sections, in this order:
 A record is one line of at most 300 characters:
 
 ```
-- C12 · home · 2026-09-29T18:24+02:00 · the draw page (O7) · holds: web
+- C12 · home/1a2b3c4d · 2026-09-29T18:24+02:00 · the draw page (O7) · holds: web
 - O7 · tournament draw · live on the demo · next: seeded pots · blocked: A2
 - D4 · Sign-in with Steam only · 2026-09-24
 - A2 · Pick the seeding rule for the draw · since 2026-09-29 (O7)
@@ -160,11 +161,14 @@ A record is one line of at most 300 characters:
 
 - **Ids are never reused.** `next_ids` holds the next free number of each
   type. An agent takes one and raises it in the same edit, so a shift that
-  dies halfway does not leave a used id behind.
+  dies halfway never leaves `next_ids` pointing at an id already in use.
 - **Closed records are deleted.** Their history is in git
   (`git log --grep='\<O7\>'`) and in `JOURNAL.md`.
 - **Decisions leave the file** when the user replaces or withdraws them, or
   when they become plain facts about the project and move into the guide.
+- **A claim names its session**: the host id, plus the first 8 characters
+  of the session id when the agent has one. Two sessions on one computer
+  can then be told apart.
 - **Host ids are plain ASCII** (`home`, `work`). The Profile gives the names
   the user calls the computers by.
 
@@ -173,8 +177,9 @@ A ready file: [template/HANDOFF.md](template/HANDOFF.md).
 ## The journal
 
 `JOURNAL.md` holds one entry per shift, newest first. It is an audit trail:
-agents read it when they need to know why, not at the start. The heading of
-an entry carries the commit range it covers:
+agents read it when they need to know why. The start reads only its top,
+and only to put a rebuilt entry there. The heading of an entry carries the
+commit range it covers:
 
 ```
 ## 2026-09-29T22:10+02:00 · home · 5480caf..a1b2c3d
@@ -185,8 +190,13 @@ an entry carries the commit range it covers:
 - left: nothing
 ```
 
-An entry rebuilt from git by the next agent ends its heading with
-`· reconstructed`.
+The three heading forms:
+
+```
+## <time> · <host> · <anchor>..<last work commit>                      a normal shift
+## <time of its last commit> · <its host, or ?> · <range> · reconstructed   a shift rebuilt from git
+## <time> · <host> · adopted at <HEAD>                                   adoption, or a move from v1
+```
 
 ## The anchor
 
@@ -210,38 +220,42 @@ Rada-Repo: 7bc4ea3c02d4 ~/spec
   existing block.
   - Check: `git log -1 --format='%(trailers:key=Rada,valueonly)'` prints
     `end`.
-- **The anchor** is the newest commit whose trailers include `Rada: end`:
+- **The anchor** is the newest commit on the Profile's branch whose
+  trailers include `Rada: end`. `tools/rada-status` is the reference
+  implementation; by hand:
 
   ```
-  git log --format='%h %(trailers:key=Rada,valueonly)' | awk '$2=="end"{print $1; exit}'
+  git log --format='%h %(trailers:key=Rada,valueonly)' | awk 'tolower($2)=="end"{print $1; exit}'
   ```
 
   A commit that only quotes the line in its body does not count.
-- **The delta** is `git log <anchor>..HEAD`. Every commit in it is new to
-  the reader, including bookkeeping.
+- **The delta** is `git log <anchor>..HEAD`, read with full messages, since
+  ids in commit bodies count too. Every commit in it is new to the reader,
+  including bookkeeping.
 - **The other repositories** each get a trailer
   `Rada-Repo: <12-character HEAD> <path>`, and their delta is
   `git -C <path> log <hash>..HEAD`. The path is absolute or starts with
   `~/`, and it may contain spaces.
 - **Never amend or squash an end commit.** An amend with a new message
   drops the trailers. A squash merge buries them in the squashed message.
-  With pull requests, merge with a merge commit or rebase. Fix a wrong end
-  commit with a new one.
+  With pull requests, use rebase merges. Fix a wrong end commit with a new
+  one.
 - **Trailers stay in the repository that holds the handoff file.** Public
   repositories get ids in their commit messages at most.
 
 ## The rules
 
 The normative text is [RULES.md](RULES.md): nine invariants, the records
-and when each is deleted, and the adopt, start, during and end steps. In
-short:
+and when each is deleted, the journal headings, and the adopt, start,
+during and end steps. In short:
 
 - **Start:**
   - read `HANDOFF.md` and run the start command in one turn;
   - leave alone a handoff file another session is editing;
-  - read the delta, and rebuild a missing shift as an end commit of its own;
-  - clear the claims of other sessions when the tree holds none of their
-    changes, and name them in the report;
+  - clear the claims of other sessions when the tree holds no changes that
+    are not yours, and name them in the report;
+  - read the delta, and rebuild a missing shift as an end commit of its own,
+    unless a claim that may be alive covers it;
   - claim;
   - report in two or three lines.
 - **During:**
@@ -282,11 +296,12 @@ sessions see each other's uncommitted changes and share git's index.
 
 **Separate clones**, where pushes decide:
 
-- `git pull --rebase` before reading, and before the claim and end
-  commits; push right after them.
+- `git pull --rebase` before reading and before editing the handoff file.
+- After each claim or end commit, `git pull --rebase` again, then push.
 - Keep the history linear.
 - Add `JOURNAL.md merge=union` to `.gitattributes`.
-- After a rebase, check `next_ids` against the highest ids in the file.
+- After a rebase, check `next_ids` against the ids in the file and in the
+  new commits' messages.
 
 ## Adopting it
 
@@ -303,6 +318,8 @@ sessions see each other's uncommitted changes and share git's index.
    things are.
 4. Make the first end commit (RULES.md, Adopt). It is the first anchor.
 
+It needs git 2.32 or later, for `git commit --trailer`.
+
 ### From v1
 
 1. Move lasting facts out of `HANDOFF.md` into the guide or docs:
@@ -316,8 +333,9 @@ sessions see each other's uncommitted changes and share git's index.
    (`anchor_commit`, `state_as_of`, the id lists), and add the Profile.
 5. Replace the v1 lines in the agents' instructions with the v2 ones.
 6. Make the migration commit a v1 handoff and a v2 end commit at once: a
-   journal entry that says the rules changed, plus the `Rada: end`
-   trailers.
+   journal entry with the "adopted" heading that says the rules changed,
+   plus the `Rada: end` trailers. `JOURNAL.md` is new, so `git add` it in
+   the same command.
 
 ## Changing the rules
 

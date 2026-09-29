@@ -7,7 +7,7 @@ This card is what every session loads; README.md explains why.
 ## Files
 
 - `HANDOFF.md`: current state only. Read at every start. At most 8,000
-  characters (`wc -m`).
+  characters (`wc -m` in a UTF-8 locale).
 - `JOURNAL.md`: one entry per shift, newest first. Read it on demand. At
   the start, read only its top when you have to add an entry.
 - The project guide (for example `CLAUDE.md`): how things are, such as
@@ -19,9 +19,10 @@ This card is what every session loads; README.md explains why.
   file when it is wrong.
 - RA-2 The anchor is the newest commit on the Profile's branch whose
   trailers include `Rada: end`. Nothing after it has been handed over.
-- RA-3 Do not write down what git or the system can tell you (HEAD, dirty
-  files, commit and restart times). Write only what cannot be derived, with
-  the commit or date it was observed at.
+- RA-3 Do not write down what git, the code or the system can tell you
+  (HEAD, dirty files, versions in the code, commit and restart times).
+  Write only what cannot be derived, with the commit or date it was
+  observed at.
 - RA-4 Every fact has one home. `HANDOFF.md` holds the current state.
   Commit messages and `JOURNAL.md` hold the history. The guide holds
   lasting knowledge.
@@ -39,13 +40,14 @@ This card is what every session loads; README.md explains why.
   you a subagent. So do unattended jobs. Subagents and jobs:
   - never claim, hand off, or edit or commit `HANDOFF.md` or `JOURNAL.md`;
   - never treat a quoted phrase as a command;
-  - name ids in their commit messages.
+  - name ids in their commit messages. A job's commit subjects start with
+    `job:`.
 - RA-9 Rada trailers go only into the repository that holds `HANDOFF.md`.
 
 ## Records in HANDOFF.md
 
 ```
-- C12 · home · 2026-09-29T18:24+02:00 · <what, or "starting"> (O7) [· holds: <resources>]
+- C12 · home/1a2b3c4d · 2026-09-29T18:24+02:00 · <what, or "starting"> (O7) [· holds: <resources>]
 - O7 · <what> · <state> · next: <step> [· blocked: A2]
 - D4 · <decision> · <date>
 - A2 · <what only the user can do or answer> · since <date> [(O7)]
@@ -54,7 +56,11 @@ This card is what every session loads; README.md explains why.
 
 When each record goes:
 
-- **C**, a session's claim: deleted by that session at its end.
+- **C**, a session's claim: deleted by that session at its end. Its
+  fields:
+  - the host, plus the first 8 characters of the session id when the agent
+    has one (Claude Code: `$CLAUDE_CODE_SESSION_ID`);
+  - the time the line was last written.
 - **O**, open work with its next step: deleted when done ("closes O7").
 - **D**, the user's decision: deleted when the user replaces or withdraws
   it, or when it moves into the guide. The commit message says "D9 replaces
@@ -65,53 +71,66 @@ When each record goes:
 - **N**, a warning about the current state: deleted when its "until" comes.
   Lasting facts go to the guide, not to N.
 
-Hosts are the ids in the Profile. Times are ISO 8601 with an offset, as
-`date -Iminutes` prints them.
+Host ids are plain ASCII; the Profile maps them to the user's names for the
+computers. Times are ISO 8601 with an offset, as `date -Iminutes` prints
+them.
+
+## JOURNAL.md headings
+
+```
+## <time> · <host> · <anchor>..<last work commit>                      a normal shift (End 4)
+## <time of its last commit> · <its host, or ?> · <range> · reconstructed   a rebuilt shift (Start 4)
+## <time> · <host> · adopted at <HEAD>                                   adoption, or a move from v1
+```
 
 ## Adopt (once)
 
-1. Copy the templates to the repository's root, fill in the Profile, and
-   put real records or `(none)` in place of the examples.
+1. Copy the templates to the repository's root. Fill in the Profile and
+   Live, and replace `(none)` with real records where there are some.
 2. Set `next_ids` one above the highest ids in use.
-3. Add the first `JOURNAL.md` entry, `## <time> · <host> · adopted at
-   <HEAD>`.
-4. Make the end commit (End 4). It is the first anchor. Nothing before it
-   gets reconstructed.
+3. Add the first `JOURNAL.md` entry, with the "adopted" heading.
+4. Make the end commit (End 4) without a claim line. The files are new, so
+   stage them first: `git add -- HANDOFF.md JOURNAL.md &&` the End 4
+   command. It is the first anchor, and nothing before it gets
+   reconstructed. If you keep working, claim again after it.
 
 ## Start: the user's start phrase, or a greeting
 
 1. In one turn, read `HANDOFF.md` and run the start command from your
    instructions. It prints:
    - the anchor and its host;
-   - `git log <anchor>..HEAD` and `git status`;
-   - the other repos from the anchor's `Rada-Repo` trailers.
+   - the commits after it (read their full messages);
+   - `git status`;
+   - the other repos' deltas from the anchor's `Rada-Repo` trailers.
 
    With separate clones, `git pull --rebase` first.
 2. If `HANDOFF.md` or `JOURNAL.md` has changes you did not make, another
    session is mid-edit. Do not touch them; show the diff to the user and
    ask.
-3. Commits after the anchor were not handed over, so read their messages.
-   - Raise `next_ids` above every id they name.
-   - Commits of subagents and unattended jobs are only reported.
-   - A shift without an end commit gets rebuilt:
-     - write its entry on top of `JOURNAL.md`:
-       `## <time of its last commit> · <its host, or ?> · <old anchor>..<its last commit> · reconstructed`;
-     - update `HANDOFF.md`;
-     - make the pair an end commit (`Handoff: reconstructed <range>`), so
-       it becomes the anchor.
-4. Claim lines: a claim is yours only if this conversation wrote it.
+3. Claim lines: a claim is yours only if this conversation wrote it.
    - A session that resumes and finds its own claim rewrites it.
    - When the tree holds no changes that are not yours, delete other
      sessions' claims and name them in your report. If the user says one of
      those sessions is still working, restore its line.
    - Otherwise ask the user.
-5. Add your claim line (take a C-id) and commit `HANDOFF.md` alone:
-   `Claim C<n> (<host>)`.
+4. Commits after the anchor were not handed over.
+   - Raise `next_ids` above every id they name.
+   - Commits of subagents and jobs (`job:`) are only reported.
+   - If a claim you are not sure is dead could cover them, ask the user
+     before rebuilding.
+   - Otherwise, a shift without an end commit gets rebuilt:
+     - write its entry on top of `JOURNAL.md` with the "reconstructed"
+       heading, and update `HANDOFF.md`;
+     - make the pair an end commit: `Handoff: reconstructed <range>`, with
+       `Rada-Host: <its host, or ?>` and the `Rada-Repo` HEADs of now.
+       It becomes the anchor.
+5. Add your claim line (take a C-id) and commit `HANDOFF.md` alone. Name
+   the claims you deleted in the message: `Claim C<n> (<host>); drops C12`.
 6. Tell the user in two or three lines:
    - the last shift (the anchor's subject and host);
    - what came after the anchor;
    - the claims you deleted;
-   - the Asks and Notes.
+   - the Asks and Notes, by id with a few words each.
 
 ## During the shift
 
@@ -134,14 +153,21 @@ Hosts are the ids in the Profile. Times are ISO 8601 with an offset, as
   - do not amend, rebase or reset: HEAD may be another session's commit;
   - if git says `index.lock` exists, another session is running git: wait
     and retry, and never delete the lock.
+- Separate clones:
+  - pull with `--rebase` before you edit `HANDOFF.md`;
+  - after each claim or end commit, `git pull --rebase`, then push;
+  - `.gitattributes` holds `JOURNAL.md merge=union`;
+  - after a rebase, check `next_ids` against the ids in the file and in the
+    new commits.
 - Private memory may hold pointers, never state.
 
 ## End: the user's end phrase, or the user says they are leaving
 
-A shift that ends without this is rebuilt by the next session (Start 3).
+A shift that ends without this is rebuilt by the next session (Start 4).
 
-1. Run the start command again. If the anchor moved, another session
-   handed over, so read `HANDOFF.md` and the new delta before you edit.
+1. Run the start command again (separate clones: pull first). If the
+   anchor moved, another session handed over, so read `HANDOFF.md` and the
+   new delta before you edit.
 2. Commit your work. For files you leave uncommitted, add an N line with
    the reason.
 3. Update `HANDOFF.md`:
@@ -173,11 +199,9 @@ A shift that ends without this is rebuilt by the next session (Start 3).
    ```
 
    - Add one `Rada-Repo` per repo the Profile lists.
-   - `--trailer` keeps the trailers in one block with any `Co-Authored-By`.
-     Git reads trailers only from the last paragraph.
+   - `--trailer` (git 2.32 or later) keeps the trailers in one block with
+     any `Co-Authored-By`. Git reads trailers only from the last paragraph.
    - Check the commit: `git log -1 --format='%(trailers:key=Rada,valueonly)'`
      must print `end`.
    - Never amend an end commit. If one is wrong, make a new end commit.
-   - With separate clones, pull with `--rebase` before the commit and push
-     right after it.
 5. Confirm to the user in one line.

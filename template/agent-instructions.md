@@ -1,7 +1,7 @@
 # Lines for the agents' instructions
 
-Put the lines between the two rules below (not the rules themselves) into
-the instructions that every session loads by itself. Replace the `<...>`
+Put the lines between the two `---` lines below (not the `---` lines
+themselves) into the instructions that every session loads by itself. Replace the `<...>`
 parts with your own.
 
 For Claude Code, that is the user's `~/.claude/CLAUDE.md`:
@@ -34,7 +34,7 @@ Agents work on <project> in turns and hand work over through
 @~/.rada/v2/RULES.md
 
 The start command, run in the same turn as reading HANDOFF.md:
-`~/.rada/v2/tools/rada-status <absolute path of the repository>; <service checks, if any>`
+`~/.rada/v2/tools/rada-status <absolute path of the repository>; date -Iminutes; <service checks, if any>`
 
 The user's phrases are commands:
 - "<start phrase>", "<another>", or any greeting at the start: start a

@@ -7,7 +7,7 @@
 #   Pass an absolute path: an agent's working directory need not be the repository.
 #
 # Prints the anchor (the newest commit whose trailers include "Rada: end") with
-# its host, the commits after it, uncommitted changes, the size of HANDOFF.md,
+# its host, the commits after it with their full messages, uncommitted changes, the size of HANDOFF.md,
 # and the same delta for every other repository named by the anchor's
 # "Rada-Repo: <hash> <path>" trailers (paths are absolute or start with ~/).
 set -u
@@ -27,7 +27,7 @@ show() { # run a command; print "(none)" if it prints nothing
 
 branch=$(git symbolic-ref -q --short HEAD || echo "DETACHED")
 echo "repo: $top (branch: $branch)"
-[ -f HANDOFF.md ] && echo "HANDOFF.md: $(wc -m < HANDOFF.md) characters (limit 8000)"
+[ -f HANDOFF.md ] && echo "HANDOFF.md: $(LC_ALL=C.UTF-8 wc -m < HANDOFF.md) characters (limit 8000)"
 
 if ! git rev-parse -q --verify HEAD >/dev/null; then
 	echo "anchor: none (the repository has no commits yet)"
@@ -45,8 +45,8 @@ if [ -z "$anchor" ]; then
 else
 	host=$(git log -1 --format='%(trailers:key=Rada-Host,valueonly,separator=%x2C)' "$anchor")
 	echo "anchor: $(git log -1 --format='%h %cI %s' "$anchor") (host: ${host:-?})"
-	echo "--- after the anchor"
-	show git log --format='%h %cI %s' "$anchor..HEAD"
+	echo "--- after the anchor (full messages: ids in the bodies count too)"
+	show git log --format='%h %cI %s%n%w(0,4,4)%b' "$anchor..HEAD"
 fi
 echo "--- uncommitted"
 show git status --short

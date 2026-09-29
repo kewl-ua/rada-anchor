@@ -7,7 +7,7 @@ Lasting knowledge: <the project guide, e.g. CLAUDE.md>.
 
 ## Profile
 
-- hosts: `home` = <what the user calls it> · `work` = <...>
+- hosts: `home` = <what the user calls it> · `work` = <...> (claims add the session: `home/1a2b3c4d`)
 - branch: `main` (claims and end commits go here)
 - language: <the user's language> with the user; English in files
 - repos: `~/<other repo>` · `~/<another>` (each gets a `Rada-Repo` trailer; or "none")
