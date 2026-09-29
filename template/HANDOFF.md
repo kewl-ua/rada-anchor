@@ -3,7 +3,7 @@
 Several AI agents work on this repository, in turns, and none of them
 remembers the others' sessions. **This file is the only channel between
 them**, together with git. It follows the protocol «Рада · anchor/1»
-(https://github.com/kewl-ua/rada-anchor). Project guide: <CLAUDE.md or
+(https://github.com/kewl-ua/rada_anchor-1). Project guide: <CLAUDE.md or
 another file: layout, how to build, test and deploy, rules>.
 
 ## Header (machine-readable; update on every handoff)
