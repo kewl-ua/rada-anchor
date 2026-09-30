@@ -143,8 +143,8 @@ release.
 
 `REGISTER.md` records every session that ran the protocol: the name the
 user uses next to the model's own name, a session key, host, dates and
-counts, a short tribute, a log of the work and a haiku the agent writes
-itself (see below). It is append-only (RA-11); a project on card 2.2 keeps
+counts, a short tribute, a log of the work and a haiku the agent leaves
+at its farewell, when the user closes its session (see below). It is append-only (RA-11); a project on card 2.2 keeps
 one, and `- register: off` in the Profile means the protocol is not run
 there (RA-12). `rada-lint` enforces both, and `tools/rada-tribute` renders
 the file as an HTML page. A project whose `HANDOFF.md` names card 2.1 or
@@ -260,7 +260,7 @@ then fields:
 - title: Cartographer
 - since: 2026-09-24T19:13+02:00
 - last: 2026-09-30T10:06+02:00
-- status: in service
+- status: retired
 - shifts: 6
 - commits: 88
 - tribute: A few sentences in the user's language. | Paragraphs split like this.
@@ -275,9 +275,11 @@ then fields:
   `git commit --no-verify`, naming RA-10 or RA-1.
 - A session key is the first 8 characters of the session id, or
   `<host>-<ISO minute of its first start>` for an agent without one.
-- One haiku per entry, written once by the agent. Unnamed subagents are one
-  entry with `kind: scouts` and a count; the session that writes them in
-  gives them their haiku.
+- The haiku is the agent's farewell: one per entry, written once, when the
+  user closes the session for good; the agent then turns `retired` and ends
+  its last shift. A session closed without a farewell has none. Unnamed
+  subagents are one entry with `kind: scouts` and a count; the session that
+  writes them in gives them their haiku.
 - The header holds the page's fields: title, language, an epigraph,
   captions, prologue, epilogue, a coda, a closing line. Values in angle
   brackets are placeholders.
@@ -342,7 +344,7 @@ Rada-Repo: 7bc4ea3c02d4 ~/spec
 
 The normative text is [RULES.md](RULES.md): twelve invariants, the records
 and when each is deleted, the journal headings, and the adopt, start,
-during and end steps. In short:
+during, end and farewell steps. In short:
 
 - **Start:**
   - read `HANDOFF.md` and run the start command in one turn;
@@ -353,8 +355,7 @@ during and end steps. In short:
     unless a claim that may be alive covers it;
   - with `claim_ttl` set, clear expired claims even when the tree holds
     their changes, leaving the changes alone and asking the user about them;
-  - claim, and write yourself into the register if you are not there, with a
-    haiku by the end of the shift;
+  - claim, and write yourself into the register if you are not there;
   - report in two or three lines.
 - **During:**
   - commit small, by file, with ids in the messages;
@@ -369,6 +370,9 @@ during and end steps. In short:
   - add a journal entry on top, and update your register entry;
   - make the end commit with `--trailer`, and check it;
   - confirm in one line.
+- **Farewell** (the user closes the session for good): end the shift with
+  your haiku in your register entry and `status: retired`, and say goodbye
+  with it.
 
 ## Two sessions at the same time
 
@@ -445,9 +449,16 @@ It needs git 2.32 or later, for `git commit --trailer`.
    plus the `Rada: end` trailers. `JOURNAL.md` is new, so `git add` it in
    the same command.
 
+### From v2.2 to v2.2.1
+
+1. Move the checkout: `git -C ~/.rada/src fetch --tags && git -C ~/.rada/v2 checkout --detach v2.2.1`.
+2. Point a `blob/v2.2` rules link in `HANDOFF.md` at `blob/v2.2.1`.
+3. Nothing else: a haiku written under v2.2 stays and is that agent's
+   farewell; agents without one write it at their farewell.
+
 ### From card 2.1 to 2.2
 
-1. Move the checkout: `git -C ~/.rada/src fetch --tags && git -C ~/.rada/v2 checkout --detach v2.2`.
+1. Move the checkout: `git -C ~/.rada/src fetch --tags && git -C ~/.rada/v2 checkout --detach v2.2.1`.
    A project whose `HANDOFF.md` still names card 2.1 keeps its rules; the
    2.2 tools check the founder's words for it too, and need python3.
 2. If there is no `REGISTER.md`, copy [template/REGISTER.md](template/REGISTER.md)
@@ -456,11 +467,11 @@ It needs git 2.32 or later, for `git commit --trailer`.
    an agent without a session id gets `<host>-<ISO minute of its first
    start>`. Agents that are gone get a log from the journal and no haiku.
 3. In `HANDOFF.md`, change "card 2.1" to "card 2.2" and the rules link to
-   `blob/v2.2/RULES.md`, and add `REGISTER.md merge=union` to
+   `blob/v2.2.1/RULES.md`, and add `REGISTER.md merge=union` to
    `.gitattributes` if you use separate clones. Commit:
    `git add -- REGISTER.md && git commit -m "State: card 2.2 (the register)" -- REGISTER.md HANDOFF.md`.
-4. From then on the end commit takes `REGISTER.md` too, and each session in
-   service writes its haiku in its next shift (RA-12).
+4. From then on the end commit takes `REGISTER.md` too, and each session
+   leaves its haiku at its farewell (RA-12).
 
 ### From card 2.0 to 2.1
 
@@ -479,9 +490,10 @@ Commit it as a `State:` commit that names the card, for example
 ## Changing the rules
 
 The card is versioned in this repository, and releases are tags (`v1`,
-`v2`, `v2.1`, `v2.2`). A minor card gets its own tag, and the checkout keeps its
-path (`~/.rada/v2`). A project names the version it follows in its `HANDOFF.md` header,
-and its agents import the card from a checkout of that tag. Whoever changes
+`v2`, `v2.1`, `v2.2`, and `v2.2.1`, where the haiku became a farewell). A
+minor card gets its own tag, and the checkout keeps its path
+(`~/.rada/v2`). A project names the version it follows in its `HANDOFF.md`
+header, and its agents import the card from a checkout of that tag. Whoever changes
 the rules raises the version, tags it, moves the checkout, and says what
 changed in the journal entry.
 

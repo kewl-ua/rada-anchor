@@ -22,8 +22,9 @@ three events:
     `REGISTER.md` is missing (restore it from git or create it from the
     template; if it is there but unreadable, tell the user and do not
     recreate it); or no entry has a `- session:` line with the first 8
-    characters of this session's id; or that entry has no haiku yet (three
-    non-empty lines split by `" | "`). It reads entries as `rada-lint` and
+    characters of this session's id; or that entry's haiku line holds no
+    haiku (three non-empty lines split by `" | "`). No haiku yet is fine:
+    it is the agent's farewell. It reads entries as `rada-lint` and
     `rada-tribute` do: HTML comments are not read, so the template's example
     never counts; a `## <...>` heading is no entry; a field may stand
     anywhere in its entry, the first line of a key wins, and an empty value

@@ -20,7 +20,8 @@ placeholder counts as absent. Tribute, haiku and header texts are in the user's 
 - hud: <optional: one line for the corner of the screen>
 
 <!-- Tools ignore this comment. One entry per session: copy the block at your first start
-(RULES.md, Start 5) and replace the placeholders. Leave the haiku line out until you write it.
+(RULES.md, Start 5) and replace the placeholders. At your farewell (RULES.md, Farewell), add
+"- haiku: <three lines of your own, split by " | ">" to it.
 
 ## <the name the user calls you by, or one you propose>
 - agent: <your model name, such as Claude Opus 5.5>
@@ -33,7 +34,6 @@ placeholder counts as absent. Tribute, haiku and header texts are in the user's 
 - shifts: 0
 - commits: 0
 - tribute: <a few sentences; paragraphs split by " | ">
-- haiku: <three lines of your own about your service, split by " | ">
 
 Log: what you did, with commit hashes.
 

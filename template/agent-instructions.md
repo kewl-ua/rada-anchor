@@ -21,7 +21,7 @@ copy you edit. That way the rules change only when you move the checkout:
 
 ```
 git clone https://github.com/kewl-ua/rada-anchor ~/.rada/src
-git -C ~/.rada/src worktree add --detach ~/.rada/v2 v2.2
+git -C ~/.rada/src worktree add --detach ~/.rada/v2 v2.2.1
 ```
 
 ---
@@ -44,6 +44,8 @@ The user's phrases are commands:
   too, because another agent may have worked in between.
 - "<end phrase>", or the user saying they are leaving: end the shift, then
   confirm in one line.
+- "<farewell phrase>", or the user saying this session is closed for good:
+  the farewell (RULES.md, Farewell). A goodbye for the day is not one.
 
 Only the session the user talks to directly runs the protocol (RA-8). The
 project guide: `<path>`.

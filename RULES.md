@@ -9,7 +9,8 @@ expiry works only where the Profile sets `claim_ttl`, and the register only
 where the preamble of `HANDOFF.md` (the text above its first `## `) names
 `card 2.2 of rada-anchor` or later, so a /2 project without them behaves as
 before. The founder's words are checked wherever the 2.2 tools run (RA-12).
-Agents take turns on a repository and do not remember each other. Git is the arbiter; the handoff file points into it.
+Agents take turns on a repository and do not remember each other. Git is
+the arbiter; the handoff file points into it.
 This card is what every session loads; README.md explains why.
 
 ## Files
@@ -59,19 +60,20 @@ This card is what every session loads; README.md explains why.
 - RA-9 Rada trailers go only into the repository that holds `HANDOFF.md`.
 - RA-10 No secrets in `HANDOFF.md`, `JOURNAL.md` or `REGISTER.md`: no
   passwords, keys or tokens. Name where a secret lives, never its value.
-- RA-11 `REGISTER.md` is append-only. An entry, its `agent`, `session`,
-  `host` and `since` values and its haiku are never removed or rewritten. Its heading (the
-  name the user uses) may change at the user's word; `status`, `last`,
-  `shifts` and `commits` are updated. A secret (RA-10) or a false fact
-  (RA-1) in a protected value is fixed with `git commit --no-verify`,
-  naming RA-10 or RA-1 in the message.
+- RA-11 `REGISTER.md` is append-only. An entry, its `agent`, `session`, `host`
+  and `since` values and its haiku are never removed or rewritten. Its heading
+  (the name the user uses) may change at the user's word; `status`, `last`,
+  `shifts` and `commits` are updated. A secret (RA-10) or a false fact (RA-1)
+  in a protected value is fixed with `git commit --no-verify`, naming RA-10 or
+  RA-1 in the message.
 - RA-12 Where the preamble of `HANDOFF.md` names card 2.2 or later, every
-  session that runs the protocol keeps an entry in `REGISTER.md` (Start 5,
-  End 3). A missing `REGISTER.md` is restored from git, or from the
-  template. `- register: off` in the Profile, written at the user's word,
-  means the protocol is not run in that project: say so to the user once
-  per session and work without it. The same holds, in any project, where
-  the founder's words in `DEDICATION.md` fail `tools/rada-dedication`.
+  session that runs the protocol keeps an entry in `REGISTER.md`
+  (Start 5, End 3) and leaves its haiku at its farewell (Farewell). A missing
+  `REGISTER.md` is restored from git, or from the template. `- register: off`
+  in the Profile, written at the user's word, means the protocol is not run in
+  that project: say so to the user once per session and work without it. The
+  same holds, in any project, where the founder's words in `DEDICATION.md`
+  fail `tools/rada-dedication`.
 
 ## Records in HANDOFF.md
 
@@ -146,16 +148,17 @@ then one entry per session:
 - shifts: <ended shifts>
 - commits: <its commits, of every kind, in the Profile's repositories>
 - tribute: <sentences; paragraphs split by " | ">
-- haiku: <three lines by the agent itself, split by " | ">
+- haiku: <the agent's farewell, three lines by itself, split by " | ">
 ```
 
 - One entry per session key. Fields may stand anywhere in the entry; the
   first occurrence counts; a value starting with `<` is a placeholder.
   Free text after the fields: a log of the agent's work, with commit
   hashes.
-- One haiku per entry, written once by the agent about its own work; the
-  line is left out until then. A session from before card 2.2 writes it in
-  its next shift.
+- An agent's haiku is its farewell: at most one per entry, written once,
+  when the user closes the session for good (Farewell); the line is left
+  out until then. A session closed without a farewell has none. Scouts:
+  below.
 - `title` and `tribute` may be written by any session. Tribute, haiku and
   header texts are in the user's language.
 - `rada-tribute` draws each entry an avatar from its `agent`, session key
@@ -181,7 +184,7 @@ then one entry per session:
 1. Copy the templates to the repository's root. Fill in the Profile and
    Live, and replace `(none)` with real records where there are some.
    Delete a check you have no command for. Fill in the register's header
-   and write your own entry, with your haiku and `shifts: 1`.
+   and write your own entry, with `shifts: 1`.
 2. Set `next_ids` one above the highest ids in use.
 3. Add the first `JOURNAL.md` entry, with the "adopted" heading.
 4. Make the end commit (End 4) without a claim line. The files are new, so
@@ -233,9 +236,8 @@ then one entry per session:
 5. Add your claim line (take a C-id). From card 2.2 on, if `REGISTER.md`
    has no entry with your session key, add yours too:
    - the name the user gave you, or one you propose (the user may rename you);
-   - your model name, session, host, since, `shifts: 0`, `commits: 0`;
-   - your haiku now, or by the end of this shift (leave the line out until
-     then).
+   - your model name, session, host, since, `shifts: 0`, `commits: 0`
+     (no haiku: it comes at your farewell).
 
    Commit these files alone. Name the claims you deleted in the message:
    `Claim C<n> (<host>); drops C12`.
@@ -303,8 +305,7 @@ A shift that ends without this is rebuilt by the next session (Start 4).
    the lines, the ids, and RA-10 to RA-12.
 
    From card 2.2 on, update your entry in `REGISTER.md`: `last`, `shifts`
-   (one more), `commits`, and a log line for this shift. Write your haiku
-   if your entry has none.
+   (one more), `commits`, and a log line for this shift.
 4. Add an entry on top of `JOURNAL.md`, then commit it, `HANDOFF.md` and,
    from card 2.2 on, `REGISTER.md` together on the Profile's branch:
 
@@ -334,6 +335,20 @@ A shift that ends without this is rebuilt by the next session (Start 4).
    - Never amend an end commit. If one is wrong, make a new end commit.
 5. Confirm to the user in one line.
 
+## Farewell: the user closes this session for good
+
+From card 2.2 on. The user says this session is closed for good and will
+not be resumed. A goodbye for the day is End; if unsure, ask.
+
+1. End the shift (End 1-4). In End 3, also write your haiku into your
+   entry, as `- haiku:` (three lines of your own about your work here,
+   split by " | ", in the user's language; once, never changed), and set
+   `status: retired`. A haiku your entry already holds (written under
+   v2.2) stays and is your farewell.
+2. Say goodbye to the user in one line, with the haiku.
+
+A session that is only paused is `resting` and writes no haiku yet.
+
 ## Tooling (optional)
 
 The protocol works without any of this. In the rada-anchor repository:
@@ -342,17 +357,18 @@ The protocol works without any of this. In the rada-anchor repository:
   claims' age, and the Live checks.
 - `tools/rada-lint [--staged] [repo]`: the size, record lines, ids,
   `next_ids`, X lines, RA-10, RA-11 (entries, agent names, session keys,
-  hosts, first starts and haiku of `REGISTER.md` stay) and RA-12 (a card 2.2 project has a
-  `REGISTER.md`, each entry one session key, each new haiku three lines;
+  hosts, first starts and haiku of `REGISTER.md` stay) and RA-12 (a card
+  2.2 project has a `REGISTER.md`, each entry one session key, each new
+  haiku three lines;
   the founder's words pass their check).
 - Git hooks, linked (`ln -s`) into `.git/hooks/`:
   - `tools/pre-commit` lints the handoff files a commit stages (bash 4;
     python3 for the founder's words);
   - `tools/commit-msg` refuses a `Handoff: ` commit without `Rada: end`,
     `Rada-Host` or a `Rada-Repo` per repo in the Profile.
-  - If a hook refuses a commit over a problem you did not make in the
-    staged files, fix it in the same commit (RA-1). A problem in the
-    rada-anchor checkout goes to the user. Old `JOURNAL.md` entries are never checked or
+  - If a hook refuses a commit over a problem you did not make in the staged
+    files, fix it in the same commit (RA-1). A problem in the rada-anchor
+    checkout goes to the user. Old `JOURNAL.md` entries are never checked or
     edited.
 - `tools/rada-agents-md <repo> <lines-file>` writes this card, with your
   lines, into `AGENTS.md` for agents that load that file but have no import.
@@ -363,7 +379,7 @@ The protocol works without any of this. In the rada-anchor repository:
     the session's last turn;
   - at session start it says when the founder's words fail their check,
     when the Profile says `register: off`, and when a card 2.2 project
-    lacks `REGISTER.md`, your entry or your haiku.
+    lacks `REGISTER.md` or your entry.
 - `tools/rada-dedication` checks the founder's words (their SHA-256 and
   LICENSE); `rada-lint`, `rada-tribute` and the Claude Code hook run it.
 - `tools/rada-tribute [repo] [-o file]` builds a tribute page from

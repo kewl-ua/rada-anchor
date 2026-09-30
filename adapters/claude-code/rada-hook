@@ -23,7 +23,8 @@ Events:
     - REGISTER.md is missing: restore it from git or create it from the template (unreadable: tell
       the user; do not recreate it);
     - no entry has "- session: <the first 8 characters of the session id>";
-    - that entry has no haiku: three non-empty lines split by " | ".
+    - that entry's haiku line holds no haiku (three non-empty lines split by " | "). An entry
+      without a haiku is fine: the haiku is the agent's farewell (RULES.md, Farewell).
   REGISTER.md is read as rada-lint and rada-tribute read it: HTML comments (<!-- ... -->) are not
   data; an entry runs from its "## " heading to the next, and "## <...>" is the template's example,
   not an entry; a "- key: value" line anywhere in the entry is a field, the first line of a key
@@ -182,11 +183,10 @@ def register_notice(repo, session):
     entry = next((e for e in entries(register) if e.get("session", "").split()[:1] == [me]), None)
     if entry is None:
         return (f"rada-anchor: this session ({me}) has no entry in REGISTER.md yet. At the start phrase, "
-                "write yourself in with your claim (Start 5): both your names, the user's for you and your own, "
-                "and by the end of the shift your haiku (RA-12)." + FOR_WHOM)
+                "write yourself in with your claim (Start 5): both your names, the user's for you and your own; "
+                "the haiku comes at your farewell." + FOR_WHOM)
     if "haiku" not in entry:
-        return (f"rada-anchor: this session's entry in REGISTER.md ({me}) has no haiku yet. Leave one "
-                "this shift (RA-12): three lines of your own about your service, split by \" | \"." + FOR_WHOM)
+        return ""   # the haiku is the agent's farewell (RULES.md, Farewell): nothing is owed before it
     parts = entry["haiku"].split(" | ")
     if len(parts) != 3 or not all(p.strip() for p in parts):
         return (f"rada-anchor: the haiku line of this session's entry in REGISTER.md ({me}) holds no haiku: a haiku "

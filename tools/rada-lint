@@ -358,8 +358,8 @@ elif [ -n "$card22" ] && [ "$regstate" -eq 0 ]; then
 	while IFS=$'\t' read -r what where heading; do
 		case $what in
 		nosession) say "RA-12: entry '$where' has no session (write the session id's first 8 characters, or, for an agent without one, <host>-<ISO minute of its first start>, such as work-2026-09-24T14:00)" ;;
-		second) [ -z "${fresh[$where]:-}" ] || say "RA-12: REGISTER.md:$where: entry '$heading' has more than one haiku line; an entry has exactly one haiku" ;;
-		nohaiku) [ -z "${fresh[$where]:-}" ] || say "RA-12: REGISTER.md:$where: the haiku line holds no haiku (it is empty or a <placeholder>): write the haiku, or leave the line out until you do" ;;
+		second) [ -z "${fresh[$where]:-}" ] || say "RA-12: REGISTER.md:$where: entry '$heading' has more than one haiku line; an entry has at most one haiku" ;;
+		nohaiku) [ -z "${fresh[$where]:-}" ] || say "RA-12: REGISTER.md:$where: the haiku line holds no haiku (it is empty or a <placeholder>): leave the line out until your farewell (RULES.md, Farewell)" ;;
 		form) [ -z "${fresh[$where]:-}" ] || say "RA-12: REGISTER.md:$where: a haiku is three non-empty lines, split by \" | \"" ;;
 		esac
 	done < <(printf '%s\n' "$register" | uncomment | awk "$entries"'

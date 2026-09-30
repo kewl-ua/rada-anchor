@@ -1,7 +1,7 @@
 # Handoff · rada-anchor/2
 
 Current state only, read at every start, at most 8,000 characters. Rules:
-card 2.2 of rada-anchor (https://github.com/kewl-ua/rada-anchor/blob/v2.2/RULES.md),
+card 2.2 of rada-anchor (https://github.com/kewl-ua/rada-anchor/blob/v2.2.1/RULES.md),
 loaded with the agents' instructions. History: `JOURNAL.md` and git. The agents: `REGISTER.md`.
 Lasting knowledge: <the project guide, e.g. CLAUDE.md>.
 
