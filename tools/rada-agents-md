@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# rada-agents-md: put the rules card into a repository's AGENTS.md (rada-anchor/2, card 2.1; optional).
+# rada-agents-md: put the rules card into a repository's AGENTS.md (rada-anchor/2, card 2.2; optional).
 #
 # Usage: rada-agents-md <repo> <lines-file>
 #

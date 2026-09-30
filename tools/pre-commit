@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
-# pre-commit hook (rada-anchor/2, card 2.1, optional): lint the handoff files a commit stages.
+# pre-commit hook (rada-anchor/2, card 2.2, optional): lint the handoff files a commit stages.
 # Install as a link, so the hook finds rada-lint next to its target:
 #   ln -s <rada-anchor checkout>/tools/pre-commit <repo>/.git/hooks/pre-commit
-if git diff --cached --name-only | grep -qxE 'HANDOFF\.md|JOURNAL\.md'; then
+# rada-lint needs bash 4, and python3 for the founder's words (without python3 it warns and goes on).
+# --no-renames: a moved handoff file is listed under its old path too, so moving it away is checked
+if git diff --cached --name-only --no-renames | grep -qxE 'HANDOFF\.md|JOURNAL\.md|REGISTER\.md'; then
 	here=$(dirname "$(readlink -f "$0")")
 	[ -x "$here/rada-lint" ] || {
 		echo "rada: rada-lint not found next to $(readlink -f "$0"): link this hook (ln -s), do not copy it. Check skipped." >&2
 		exit 0
 	}
 	"$here/rada-lint" --staged "$(git rev-parse --show-toplevel)" || {
-		echo "rada: fix the staged HANDOFF.md / JOURNAL.md first (see above). A problem you did not make: fix it in the same commit (RA-1)." >&2
+		echo "rada: rada-lint refused the staged HANDOFF.md / JOURNAL.md / REGISTER.md (see above). Problems in the staged files are fixed in the same commit, one you did not make too (RA-1); a problem in the rada-anchor checkout (\"RA-12 (checkout)\") goes to the user: do not edit the checkout." >&2
 		exit 1
 	}
 fi

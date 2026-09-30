@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # rada-status: what a starting agent needs from git, in one call.
-# Optional tooling for rada-anchor/2 (card 2.1); the protocol works without it.
+# Optional tooling for rada-anchor/2 (card 2.2); the protocol works without it.
 #
 # Usage: rada-status [--checks] [repo]
 #   repo: the repository that holds HANDOFF.md (default: the current directory).

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""rada-hook: a Claude Code hook for rada-anchor/2, card 2.1 (optional).
+"""rada-hook: a Claude Code hook for rada-anchor/2, card 2.2 (optional).
 
 Usage in ~/.claude/settings.json (see README.md next to this file):
 
@@ -9,9 +9,33 @@ Events:
 - SessionStart: adds tools/rada-status <repo> output (the git part, as of the session's start) to
   the context. It does not replace the start command: at the start phrase, Start 1 still runs it.
   On resume or compact it also says what came in since the session's last turn.
+  First it runs tools/rada-dedication of this checkout (with this Python, so exec bits do not
+  matter), whatever card the project names: the founder's words travel unchanged (RA-12).
+  - Not intact, or the tool missing: the context is that notice alone. It names the checkout and
+    says to tell the user and not to edit the checkout; no status, no register notice.
+  - The tool could not run: a warning that the words were not checked comes first, then the rest.
+  Where HANDOFF.md's preamble, the text before its first "## " line, names "card 2.2 of rada-anchor"
+  or later (any whitespace between the words, line breaks included; rada-lint makes the same test),
+  RA-12 applies:
+  - HANDOFF.md has a "- register: off" line (the user's off switch, in its Profile): the context is
+    only the note that the protocol is not run in this project: no claim, no handoff;
+  - otherwise it first says what the session still owes the register (RULES.md, Start 5), one of:
+    - REGISTER.md is missing: restore it from git or create it from the template (unreadable: tell
+      the user; do not recreate it);
+    - no entry has "- session: <the first 8 characters of the session id>";
+    - that entry has no haiku: three non-empty lines split by " | ".
+  REGISTER.md is read as rada-lint and rada-tribute read it: HTML comments (<!-- ... -->) are not
+  data; an entry runs from its "## " heading to the next, and "## <...>" is the template's example,
+  not an entry; a "- key: value" line anywhere in the entry is a field, the first line of a key
+  wins, and an empty value or one that starts with "<" (a placeholder) is absent. The session is
+  the first word of its value.
+  Where HANDOFF.md names card 2.1 or older, it says nothing about the register. The notices come
+  first, the news next, the rada-status output last, so the cut at LIMIT characters takes the end of
+  the status output (or of very long news), never a notice.
 - Stop: records where every repository stands at the end of a turn (silent).
 - UserPromptSubmit: if commits came in since the end of this session's last turn, lists them and
-  says what to do (RULES.md, During). Nothing new: prints nothing, costs nothing.
+  says what to do (RULES.md, During). Nothing new: prints nothing, costs nothing. Where the protocol
+  is not run (the register off, or the founder's words not intact), it prints nothing either.
   Known gap: commits another session makes during this session's turn are recorded at Stop and not
   reported.
 
@@ -22,17 +46,29 @@ locks); its only state is ~/.rada/state/<session>.json.
 
 import json
 import os
+import re
 import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.realpath(__file__))
+CHECKOUT = os.path.realpath(os.path.join(HERE, "..", ".."))
 STATUS = os.path.join(HERE, "..", "..", "tools", "rada-status")
+DEDICATION = os.path.join(CHECKOUT, "tools", "rada-dedication")
 STATE_DIR = os.path.expanduser("~/.rada/state")
 LIMIT = 6000  # characters of context at most; Claude Code caps additionalContext at 10 000
+# RA-12 applies where HANDOFF.md's preamble (before its first "## " line) names card 2.2 or later
+CARD_22 = re.compile(r"card\s+2\.([2-9]|[1-9][0-9])\s+of\s+rada-anchor", re.A)
+REGISTER_OFF = re.compile(r"^- register:[ \t]*off\b", re.M)  # the user's off switch, in the Profile
+HEADING = re.compile(r"^## ", re.M)
+FIELD = re.compile(r"^- ([a-z_]+):(.*)$", re.M)
+EXAMPLE = re.compile(r"<.*>")  # "## <...>": the template's example heading, not an entry
+COMMENT = re.compile(r"<!--.*?-->", re.S)  # an unclosed "<!--" is text
 
 
 ENV = {**os.environ, "GIT_OPTIONAL_LOCKS": "0"}
 FOR_WHOM = " (For the session the user talks to. A subagent, workflow agent or job ignores this: RA-8.)"
+OFF = ("rada-anchor: the register is off in this project (Profile: register: off), so this protocol is not run "
+       "here (RA-12). Tell the user once, and work without it: no claim, no handoff." + FOR_WHOM)
 
 
 def git(repo, *args):
@@ -77,6 +113,88 @@ def news(seen, now):
             "(RULES.md, During)." + FOR_WHOM + "\n" + "\n".join(lines))
 
 
+def read(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def dedication_notice():
+    """The check of the founder's words in this checkout (RA-12), whatever card the project names, as
+    (text, intact). Not intact (changed, or tools/rada-dedication missing): its notice, and the protocol is not
+    run. Intact: no text, or a warning when the tool could not run (the words were not checked)."""
+    if not os.path.isfile(DEDICATION):
+        return (f"rada-anchor: tools/rada-dedication is missing from the rada-anchor checkout at {CHECKOUT}, so "
+                "the founder's words cannot be checked: this checkout is not rada-anchor, and the protocol is not "
+                "run from it (RULES.md, RA-12). Tell the user; do not edit the checkout." + FOR_WHOM, False)
+    try:  # run by this interpreter, so a lost exec bit does not matter
+        done = subprocess.run([sys.executable or "python3", DEDICATION], capture_output=True, text=True,
+                              errors="replace", timeout=10, env=ENV)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        why = "it timed out" if isinstance(e, subprocess.TimeoutExpired) else e.strerror or str(e)
+    else:
+        if done.returncode == 0:
+            return "", True
+        if done.returncode == 1 and done.stdout.startswith("rada-dedication:"):
+            return done.stdout.strip().replace("rada-dedication:", "rada-anchor:", 1) + FOR_WHOM, False
+        why = (done.stderr.strip().splitlines() or [f"exit status {done.returncode}"])[-1][:200]
+    return (f"rada-anchor: tools/rada-dedication could not run ({why}), so the founder's words were not "
+            "checked: tell the user." + FOR_WHOM, True)
+
+
+def register_state(repo):
+    """Where RA-12 applies (HANDOFF.md's preamble names card 2.2 or later): "on", or "off" where HANDOFF.md
+    has the user's off switch; None where HANDOFF.md names card 2.1 or older, or cannot be read."""
+    handoff = read(os.path.join(repo, "HANDOFF.md")) or ""
+    if not CARD_22.search(HEADING.split(handoff, 1)[0]):
+        return None
+    return "off" if REGISTER_OFF.search(handoff) else "on"
+
+
+def entries(register):
+    """The entries of REGISTER.md as dicts of their fields, read as rada-lint and rada-tribute read them."""
+    out = []
+    for block in HEADING.split(COMMENT.sub("", register))[1:]:  # [0] is the header, before the first "## "
+        heading, _, body = block.partition("\n")
+        if EXAMPLE.fullmatch(heading.strip()):
+            continue
+        fields = {}
+        for key, value in FIELD.findall(body):
+            fields.setdefault(key, value.strip())  # the first line of a key wins
+        # an empty value or a "<placeholder>" is absent
+        out.append({k: v for k, v in fields.items() if v and not v.startswith("<")})
+    return out
+
+
+def register_notice(repo, session):
+    """What this session still owes REGISTER.md (RA-12), as text; empty if nothing. Asked only where RA-12
+    applies and the register is not off."""
+    path = os.path.join(repo, "REGISTER.md")
+    register = read(path)
+    if register is None and os.path.exists(path):
+        return ("rada-anchor: REGISTER.md is unreadable: tell the user; do not recreate it (RA-11)." + FOR_WHOM)
+    if register is None:
+        return ("rada-anchor: REGISTER.md is missing; card 2.2 requires it (RA-12). At the start phrase, restore it "
+                "from git or create it from the template, and write yourself in." + FOR_WHOM)
+    me = session[:8]
+    entry = next((e for e in entries(register) if e.get("session", "").split()[:1] == [me]), None)
+    if entry is None:
+        return (f"rada-anchor: this session ({me}) has no entry in REGISTER.md yet. At the start phrase, "
+                "write yourself in with your claim (Start 5): both your names, the user's for you and your own, "
+                "and by the end of the shift your haiku (RA-12)." + FOR_WHOM)
+    if "haiku" not in entry:
+        return (f"rada-anchor: this session's entry in REGISTER.md ({me}) has no haiku yet. Leave one "
+                "this shift (RA-12): three lines of your own about your service, split by \" | \"." + FOR_WHOM)
+    parts = entry["haiku"].split(" | ")
+    if len(parts) != 3 or not all(p.strip() for p in parts):
+        return (f"rada-anchor: the haiku line of this session's entry in REGISTER.md ({me}) holds no haiku: a haiku "
+                "is three non-empty lines, split by \" | \" (RA-12). If git does not hold that line yet, rewrite "
+                "it; if git does, it stays (RA-11): tell the user." + FOR_WHOM)
+    return ""
+
+
 def emit(event, text):
     if len(text) > LIMIT:
         text = text[:LIMIT] + "\n[... cut; run the start command for the rest]"
@@ -105,21 +223,28 @@ def main():
         seen = None
 
     if name == "SessionStart":
-        try:
-            out = subprocess.run([STATUS, main_repo], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                                 errors="replace", timeout=20, env=ENV).stdout
-        except (OSError, subprocess.TimeoutExpired):
-            out = "(rada-status failed; run the start command)"
-        text = ("rada-anchor: rada-status at session start (the git part only). At the start phrase, still run the "
-                "start command (Start 1)." + FOR_WHOM + "\n" + out)
-        if event.get("source") in ("resume", "compact"):
-            since = news(seen, now)
-            if since:
-                text = since + "\n\n" + text
-        emit(name, text)
+        check, intact = dedication_notice()
+        register = register_state(main_repo) if intact else None
+        if not intact:  # the protocol is not run from this checkout: the notice alone, no start command
+            emit(name, check)
+        elif register == "off":  # the protocol is not run in this project
+            emit(name, OFF)
+        else:
+            try:
+                out = subprocess.run([STATUS, main_repo], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                     errors="replace", timeout=20, env=ENV).stdout
+            except (OSError, subprocess.TimeoutExpired):
+                out = "(rada-status failed; run the start command)"
+            status = ("rada-anchor: rada-status at session start (the git part only). At the start phrase, still run "
+                      "the start command (Start 1)." + FOR_WHOM + "\n" + out)
+            owed = register_notice(main_repo, session) if register == "on" else ""
+            since = news(seen, now) if event.get("source") in ("resume", "compact") else ""
+            # the status output goes last: when emit() cuts at LIMIT, it cuts that, never a notice
+            emit(name, "\n\n".join(part for part in (check, owed, since, status) if part))
     elif name == "UserPromptSubmit":
         since = news(seen, now)
-        if since:
+        # where the protocol is not run, its advice would mislead: the register off, or the words not intact
+        if since and register_state(main_repo) != "off" and dedication_notice()[1]:
             emit(name, since)
     # Stop, and after the other events: remember where everything stands
     with open(state_file + ".tmp", "w") as f:

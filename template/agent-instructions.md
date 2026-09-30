@@ -21,7 +21,7 @@ copy you edit. That way the rules change only when you move the checkout:
 
 ```
 git clone https://github.com/kewl-ua/rada-anchor ~/.rada/src
-git -C ~/.rada/src worktree add --detach ~/.rada/v2 v2.1
+git -C ~/.rada/src worktree add --detach ~/.rada/v2 v2.2
 ```
 
 ---

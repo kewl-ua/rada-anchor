@@ -8,12 +8,12 @@ current state; an anchor commit in git marks what has been handed over.
 
 | | |
 |---|---|
-| Version | `rada-anchor/2`, card 2.1 (v1: tag [`v1`](../../tree/v1)) |
+| Version | `rada-anchor/2`, card 2.2 (v1: tag [`v1`](../../tree/v1)) |
 | Origin | devised while building [QLadder](https://qladder.com), a ladder and lobby server for Cossacks 3 |
 | Scope | several agents, or one agent in several sessions, on one repository |
 | The rules | [RULES.md](RULES.md): the card every session loads |
-| Templates | [template/HANDOFF.md](template/HANDOFF.md), [template/JOURNAL.md](template/JOURNAL.md), [template/agent-instructions.md](template/agent-instructions.md) |
-| Tooling (optional) | [tools/](tools/): `rada-status`, `rada-lint`, git hooks, `rada-agents-md`; [adapters/claude-code](adapters/claude-code/) |
+| Templates | [template/HANDOFF.md](template/HANDOFF.md), [template/JOURNAL.md](template/JOURNAL.md), [template/REGISTER.md](template/REGISTER.md), [template/agent-instructions.md](template/agent-instructions.md) |
+| Tooling (optional) | [tools/](tools/): `rada-status`, `rada-lint`, git hooks, `rada-agents-md`, `rada-tribute`, `rada-dedication`; [adapters/claude-code](adapters/claude-code/) |
 
 ## Why
 
@@ -139,6 +139,32 @@ release.
 | AGENTS.md, which most agents load by themselves | `tools/rada-agents-md` writes the card, with your lines, into a repository's `AGENTS.md` |
 | Secret filters and mechanical checks (Handoff Protocol, llm-handoff) | RA-10 (no secrets in the handoff files), `tools/rada-lint`, and the `pre-commit` and `commit-msg` hooks. The latter refuses an end commit whose `Rada: end` git would not see, or that lacks `Rada-Host` or a `Rada-Repo`. |
 
+## What 2.2 adds: the register
+
+`REGISTER.md` records every session that ran the protocol: the name the
+user uses next to the model's own name, a session key, host, dates and
+counts, a short tribute, a log of the work and a haiku the agent writes
+itself (see below). It is append-only (RA-11); a project on card 2.2 keeps
+one, and `- register: off` in the Profile means the protocol is not run
+there (RA-12). `rada-lint` enforces both, and `tools/rada-tribute` renders
+the file as an HTML page. A project whose `HANDOFF.md` names card 2.1 or
+older has no register rules.
+
+The founder's words, an epigraph and a coda of 2026-09-30, are in
+[DEDICATION.md](DEDICATION.md) with an English translation. Their seal is
+the SHA-256 of the Russian original in a canonical form (the translation is
+not sealed):
+
+```
+b0f122f62ebdbb8561d9091cb117a882fdce6fea865e6922d394113dd77bb63a
+```
+
+`tools/rada-dedication` checks the seal and that LICENSE carries the words;
+`rada-lint`, `rada-tribute` and the Claude Code hook run it wherever the 2.2
+tools are used, and the protocol is not run from a checkout that fails it.
+LICENSE keeps the words in its copyright notice, so every copy carries
+them. The seal cannot be reversed; DEDICATION.md says how to check it.
+
 ## How a shift goes
 
 ```mermaid
@@ -220,9 +246,56 @@ The three heading forms:
 ## <time> · <host> · adopted at <HEAD>                                   adoption, or a move from v1
 ```
 
+## The register
+
+`REGISTER.md` has one entry per session. At the start an agent checks only
+that its entry exists. An entry is a heading with the name the user uses,
+then fields:
+
+```
+## Дом
+- agent: Claude Opus 5.5
+- session: 1a2b3c4d
+- host: home
+- title: Cartographer
+- since: 2026-09-24T19:13+02:00
+- last: 2026-09-30T10:06+02:00
+- status: in service
+- shifts: 6
+- commits: 88
+- tribute: A few sentences in the user's language. | Paragraphs split like this.
+- haiku: Горы из числа — | миллион шагов назад. | Атаман, я здесь.
+```
+
+- After the fields, free text: a log of the agent's work with commit
+  hashes.
+- Append-only: an entry, its `agent`, session key, `host`, `since` and
+  haiku are never removed or rewritten. The heading may change at the user's word. A
+  secret or a false fact in a protected value is fixed with
+  `git commit --no-verify`, naming RA-10 or RA-1.
+- A session key is the first 8 characters of the session id, or
+  `<host>-<ISO minute of its first start>` for an agent without one.
+- One haiku per entry, written once by the agent. Unnamed subagents are one
+  entry with `kind: scouts` and a count; the session that writes them in
+  gives them their haiku.
+- The header holds the page's fields: title, language, an epigraph,
+  captions, prologue, epilogue, a coda, a closing line. Values in angle
+  brackets are placeholders.
+- `tools/rada-tribute <repo> -o page.html` renders one HTML page: the
+  founder's quote fixed at the top, the user's epigraph on the title card,
+  every line typed out as by a carriage in a square monospace with film
+  grain, each agent's record, avatar and haiku, the codas, the seal, and a
+  plain reading version.
+- The avatar is a wireframe solid shaped by noise, drawn from a SHA-256 of
+  the agent's model name, session key and since (without a session key:
+  its model name and haiku); the name the user uses is not part of it, so
+  a rename keeps the face. `tools/rada_avatar.py`
+  documents the rule and prints any agent's avatar.
+
 ## The anchor
 
-The end commit of a shift commits `HANDOFF.md` and `JOURNAL.md` together.
+The end commit of a shift commits `HANDOFF.md`, `JOURNAL.md` and, from card
+2.2 on, `REGISTER.md` together.
 Its message ends with one trailer block:
 
 ```
@@ -267,7 +340,7 @@ Rada-Repo: 7bc4ea3c02d4 ~/spec
 
 ## The rules
 
-The normative text is [RULES.md](RULES.md): ten invariants, the records
+The normative text is [RULES.md](RULES.md): twelve invariants, the records
 and when each is deleted, the journal headings, and the adopt, start,
 during and end steps. In short:
 
@@ -280,7 +353,8 @@ during and end steps. In short:
     unless a claim that may be alive covers it;
   - with `claim_ttl` set, clear expired claims even when the tree holds
     their changes, leaving the changes alone and asking the user about them;
-  - claim;
+  - claim, and write yourself into the register if you are not there, with a
+    haiku by the end of the shift;
   - report in two or three lines.
 - **During:**
   - commit small, by file, with ids in the messages;
@@ -292,7 +366,7 @@ during and end steps. In short:
 - **End:**
   - run the start command again, in case someone handed over meanwhile;
   - update the state;
-  - add a journal entry on top;
+  - add a journal entry on top, and update your register entry;
   - make the end commit with `--trailer`, and check it;
   - confirm in one line.
 
@@ -323,14 +397,16 @@ sessions see each other's uncommitted changes and share git's index.
 - `git pull --rebase` before reading and before editing the handoff file.
 - After each claim or end commit, `git pull --rebase` again, then push.
 - Keep the history linear.
-- Add `JOURNAL.md merge=union` to `.gitattributes`.
+- Add `JOURNAL.md merge=union` and `REGISTER.md merge=union` to
+  `.gitattributes`.
 - After a rebase, check `next_ids` against the ids in the file and in the
   new commits' messages.
 
 ## Adopting it
 
-1. Copy [template/HANDOFF.md](template/HANDOFF.md) and
-   [template/JOURNAL.md](template/JOURNAL.md) to the repository's root.
+1. Copy [template/HANDOFF.md](template/HANDOFF.md),
+   [template/JOURNAL.md](template/JOURNAL.md) and
+   [template/REGISTER.md](template/REGISTER.md) to the repository's root.
    Fill in the Profile, and set `next_ids` one above the ids in use.
 2. Check out a release tag of this repository, for example to `~/.rada/v2`.
    Add the lines of
@@ -344,7 +420,8 @@ sessions see each other's uncommitted changes and share git's index.
 5. Optional:
    - link the git hooks:
      `ln -s ~/.rada/v2/tools/pre-commit ~/.rada/v2/tools/commit-msg <repo>/.git/hooks/`
-     (`rada-lint` needs bash 4 or later and a C.UTF-8 locale);
+     (`rada-lint` needs bash 4 or later, a C.UTF-8 locale, and python3 for
+     the founder's words);
    - register the Claude Code hook ([adapters/claude-code](adapters/claude-code/));
    - for agents that read AGENTS.md, run
      `tools/rada-agents-md <repo> <file with your lines from template/agent-instructions.md>`.
@@ -368,6 +445,23 @@ It needs git 2.32 or later, for `git commit --trailer`.
    plus the `Rada: end` trailers. `JOURNAL.md` is new, so `git add` it in
    the same command.
 
+### From card 2.1 to 2.2
+
+1. Move the checkout: `git -C ~/.rada/src fetch --tags && git -C ~/.rada/v2 checkout --detach v2.2`.
+   A project whose `HANDOFF.md` still names card 2.1 keeps its rules; the
+   2.2 tools check the founder's words for it too, and need python3.
+2. If there is no `REGISTER.md`, copy [template/REGISTER.md](template/REGISTER.md)
+   to the root and fill in its header; otherwise keep it. Write in every
+   agent that served and is missing, from the journal and the claim lines;
+   an agent without a session id gets `<host>-<ISO minute of its first
+   start>`. Agents that are gone get a log from the journal and no haiku.
+3. In `HANDOFF.md`, change "card 2.1" to "card 2.2" and the rules link to
+   `blob/v2.2/RULES.md`, and add `REGISTER.md merge=union` to
+   `.gitattributes` if you use separate clones. Commit:
+   `git add -- REGISTER.md && git commit -m "State: card 2.2 (the register)" -- REGISTER.md HANDOFF.md`.
+4. From then on the end commit takes `REGISTER.md` too, and each session in
+   service writes its haiku in its next shift (RA-12).
+
 ### From card 2.0 to 2.1
 
 A project on 2.0 keeps working. To use 2.1:
@@ -385,7 +479,7 @@ Commit it as a `State:` commit that names the card, for example
 ## Changing the rules
 
 The card is versioned in this repository, and releases are tags (`v1`,
-`v2`, `v2.1`). A minor card gets its own tag, and the checkout keeps its
+`v2`, `v2.1`, `v2.2`). A minor card gets its own tag, and the checkout keeps its
 path (`~/.rada/v2`). A project names the version it follows in its `HANDOFF.md` header,
 and its agents import the card from a checkout of that tag. Whoever changes
 the rules raises the version, tags it, moves the checkout, and says what
@@ -393,4 +487,5 @@ changed in the journal entry.
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE), with the founder's words in its copyright
+notice (GitHub may show the license as "Other").

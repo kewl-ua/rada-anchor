@@ -1,20 +1,55 @@
 #!/usr/bin/env bash
-# rada-lint: mechanical checks of HANDOFF.md and JOURNAL.md (rada-anchor/2, card 2.1). Optional tooling.
+# rada-lint: mechanical checks of HANDOFF.md, JOURNAL.md and REGISTER.md (rada-anchor/2, card 2.2). Optional tooling.
 #
 # Usage: rada-lint [--staged] [repo]    (repo: the one that holds HANDOFF.md; default: the current directory)
 #   --staged: check the handoff files as they are staged for the commit (git's index), as the
 #             pre-commit hook does, not as they are in the working tree.
 #
+# Checks the founder's words for every project, whatever card it names: runs tools/rada-dedication,
+# next to this file, with python3 (RA-12). A failure is the rada-anchor checkout's, not the
+# project's: its line starts "RA-12 (checkout)", names the checkout and says to tell the user.
+# Without python3 it says so on stderr and goes on.
 # Checks HANDOFF.md:
 #   - at most 8,000 characters;
 #   - every record line (- C12 · ..., also O D A N X) at most 300 characters, not indented;
 #   - no id twice; every X names an O that is there;
 #   - next_ids above every id in use, in the file and in the messages of the commits after the anchor.
-# Checks RA-10 (nothing that looks like a secret) in HANDOFF.md, and in the lines added to JOURNAL.md
-# (old journal entries are history and are not checked). Found values are never printed.
+# Checks RA-10 (nothing that looks like a secret) in HANDOFF.md, and in the lines JOURNAL.md and
+# REGISTER.md add against HEAD (old entries are history and are not checked); it names the line by
+# its number in the file. Found values are never printed.
+# Reads REGISTER.md without its HTML comments (<!-- ... -->). An entry runs from a "## " line (its
+# heading) to the next; a heading "## <...>" is the template's example, not an entry. Its
+# "- key: value" fields may stand anywhere in it; the first of each key counts, and a value that is
+# empty or starts with "<" (a placeholder) is none. Its session is the first word of "- session:",
+# its kind the first word of "- kind:". A REGISTER.md that is there but cannot be read is reported
+# as such (tell the user; do not recreate it), never as missing.
+# Checks RA-11:
+#   - no session appears in more than one entry (entries of kind scouts aside);
+#   and against the REGISTER.md of HEAD:
+#   - every entry with a session is still there (by session), its "- agent:", "- host:" and
+#     "- since:" values unchanged, with every haiku it had; the heading may change. Of two entries
+#     with one session, the second may take a session of its own, found as an entry without a
+#     session is;
+#   - every entry without a session is still there, found by its heading, else by its "- agent:"
+#     value and haiku; it may gain a session, and keeps its "- agent:", "- host:" and "- since:"
+#     values and every haiku;
+#   - entries of kind scouts are not fewer; one found by its heading keeps its "- host:" and
+#     "- since:" values and every haiku it had, and every haiku of one not found stays in some
+#     entry of kind scouts.
+#   A value HEAD lacks may be added. rada-tribute draws an entry's avatar from its agent, session key
+#   and since, or from its agent and haiku where it has no session key (scouts). A false value is
+#   fixed as RULES.md says (RA-11); the check makes no exception.
+# Checks RA-12 where the preamble of HANDOFF.md (the text before its first "## " line) matches
+# card\s+2\.([2-9]|[1-9][0-9])\s+of\s+rada-anchor, unless a line of HANDOFF.md reads
+# "- register: off" (the user turned the register off; then nothing about the register is said):
+#   - REGISTER.md is there, and every entry not of kind scouts has a session;
+#   - every "- haiku:" line the commit adds or changes is its entry's only one and holds a haiku:
+#     three non-empty lines split by " | ", not a placeholder. Haiku lines already in HEAD are not
+#     checked again.
 #
 # Prints one line per problem and exits 1 if there is any; prints nothing and exits 0 otherwise.
-# Needs bash 4 or later and a C.UTF-8 locale (for counting characters).
+# Needs bash 4 or later and a C.UTF-8 locale (for counting characters), and python3 for the
+# founder's words.
 set -u
 export LC_ALL=C.UTF-8 GIT_OPTIONAL_LOCKS=0
 ((BASH_VERSINFO[0] >= 4)) || { echo "rada-lint: needs bash 4 or later; skipped" >&2; exit 0; }
@@ -30,17 +65,48 @@ top=$(git -C "${1:-.}" rev-parse --show-toplevel 2>/dev/null) || {
 	echo "rada-lint: '${1:-.}' is not inside a git repository" >&2
 	exit 2
 }
+dedication=$(dirname "$(readlink -f "$0")")/rada-dedication   # before the cd: $0 may be relative
 cd "$top" || exit 2
 
-# the text of a handoff file: staged or in the working tree
+# the text of a handoff file: staged or in the working tree; returns 1 if the file is not there,
+# 2 if it is there but cannot be read
 text() {
-	if [ -n "$staged" ]; then git show ":$1" 2>/dev/null; else cat "$1" 2>/dev/null; fi
+	if [ -n "$staged" ]; then
+		git cat-file -e ":$1" 2>/dev/null || return 1
+		git show ":$1" 2>/dev/null || return 2
+	else
+		[ -e "$1" ] || [ -L "$1" ] || return 1
+		cat -- "$1" 2>/dev/null || return 2
+	fi
 }
-handoff=$(text HANDOFF.md) || true
-[ -n "$handoff" ] || { echo "rada-lint: no HANDOFF.md in $top" >&2; exit 2; }
+handoff=$(text HANDOFF.md)
+case $? in
+	1) echo "rada-lint: no HANDOFF.md in $top" >&2; exit 2 ;;
+	2) echo "rada-lint: HANDOFF.md in $top cannot be read" >&2; exit 2 ;;
+esac
+[ -n "$handoff" ] || { echo "rada-lint: HANDOFF.md in $top is empty" >&2; exit 2; }
 
 problems=0
 say() { echo "rada-lint: $*"; problems=$((problems + 1)); }
+
+# RA-12: the founder's words travel with rada-anchor unchanged (tools/rada-dedication, next to this one).
+# Checked for every project, whatever card it names; a failure is the checkout's, so it goes to the user.
+checkout=$(dirname "$(dirname "$dedication")")
+if [ ! -f "$dedication" ]; then
+	say "RA-12 (checkout): tools/rada-dedication is missing in the rada-anchor checkout at $checkout, so it is not rada-anchor: tell the user; do not edit the checkout"
+elif ! command -v python3 >/dev/null 2>&1; then
+	echo "rada-lint: python3 not found; the founder's words were not checked" >&2
+elif ! out=$(python3 "$dedication" 2>&1); then
+	out=${out##*$'\n'}; out=${out#rada-dedication: }   # its last line: a traceback ends with the error
+	case $out in *"$checkout"*) ;; *) out="the rada-anchor checkout at $checkout: $out" ;; esac
+	shopt -s nocasematch
+	if [[ $out != *"tell the user"* ]]; then
+		[[ $out == *[.!?] ]] || out+=.
+		out+=" Tell the user; do not edit the checkout."
+	fi
+	shopt -u nocasematch
+	say "RA-12 (checkout): $out"
+fi
 
 size=$(printf '%s\n' "$handoff" | wc -m)
 [ "$size" -le 8000 ] || say "HANDOFF.md has $size characters (at most 8000)"
@@ -92,25 +158,226 @@ else
 	done
 fi
 
-# RA-10: things that look like secrets. Only values that mix letters and digits count, so
-# "secret: /etc/app.env", "token: \$DEPLOY_TOKEN" or "password: rotated" (where a secret lives) pass.
+# RA-10: things that look like secrets. The key may end a longer name (DB_PASSWORD, access_token,
+# MY_API_KEY) and stand in quotes (JSON), with spaces or tabs around its ":" or "=". Only values that
+# mix letters and digits count, so "secret: /etc/app.env", "token: \$DEPLOY_TOKEN", "token: none" or
+# "password: rotated" (where a secret lives) pass.
 patterns='-----BEGIN [A-Z ]*PRIVATE KEY-----|AKIA[0-9A-Z]{16}|\bsk-[A-Za-z0-9_-]{20,}|\bgh[pousr]_[A-Za-z0-9]{30,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}'
-patterns+="|\\b(password|passwd|pwd|secret|token|api[_-]?key)\\b *[:=] *[\"']?([A-Za-z0-9+_.-]*[0-9][A-Za-z0-9+_.-]*[A-Za-z]|[A-Za-z0-9+_.-]*[A-Za-z][A-Za-z0-9+_.-]*[0-9])[A-Za-z0-9+_.-]{4,}"
-secrets() { # $1 = file name, text on stdin; prints the line numbers of hits
-	grep -nEio -- "$patterns" | cut -d: -f1 | sort -un | while IFS= read -r n; do
+patterns+="|(^|[^A-Za-z0-9])[A-Za-z0-9_]*(password|passwd|pwd|secret|token|api[_-]?key)[\"']?[[:space:]]*[:=][[:space:]]*[\"']?([A-Za-z0-9+_.-]*[0-9][A-Za-z0-9+_.-]*[A-Za-z]|[A-Za-z0-9+_.-]*[A-Za-z][A-Za-z0-9+_.-]*[0-9])[A-Za-z0-9+_.-]{4,}"
+secrets() { # $1 = file name; stdin: "<line number><TAB><text>" lines; one problem line per line with hits
+	grep -aEi -- "$patterns" | cut -f1 | sort -un | while IFS= read -r n; do
 		echo "rada-lint: $1:$n: looks like a secret (RA-10); write where it lives, not the value"
 	done
 }
-hits=$(printf '%s\n' "$handoff" | secrets HANDOFF.md)
-if [ -n "$staged" ]; then
-	added=$(git diff --cached -U0 -- JOURNAL.md | grep '^+' | grep -v '^+++' | cut -c2-)
-else
-	added=$(git diff HEAD -U0 -- JOURNAL.md 2>/dev/null | grep '^+' | grep -v '^+++' | cut -c2-)
-fi
-[ -z "$added" ] || hits+=$(printf '%s\n' "$added" | secrets "JOURNAL.md (added lines)")
+# the lines the checked version of a file adds against HEAD, as "<line number in the file><TAB><text>",
+# numbered through the diff's hunk headers (@@ -a,b +c,d @@), which --inter-hunk-context=0 keeps free
+# of context lines whatever diff.interHunkContext says; a file that HEAD lacks adds all its lines
+added() { # $1 = file name
+	if [ -n "$staged" ]; then
+		git diff --cached --no-color --no-ext-diff --no-textconv -U0 --inter-hunk-context=0 -- "$1"
+	elif git cat-file -e "HEAD:$1" 2>/dev/null; then
+		git diff HEAD --no-color --no-ext-diff --no-textconv -U0 --inter-hunk-context=0 -- "$1"
+	elif [ -f "$1" ]; then
+		git diff --no-index --no-color --no-ext-diff --no-textconv -U0 --inter-hunk-context=0 -- /dev/null "$1"
+	fi 2>/dev/null | awk '
+		/^diff / { hunk = 0 }
+		/^@@ / { match($0, /\+[0-9]+/); n = substr($0, RSTART + 1, RLENGTH - 1); hunk = 1; next }
+		hunk && /^\+/ { print n "\t" substr($0, 2); n++ }'
+}
+hits=$({
+	printf '%s\n' "$handoff" | awk '{ print NR "\t" $0 }' | secrets HANDOFF.md
+	for f in JOURNAL.md REGISTER.md; do added "$f" | secrets "$f"; done
+})
 if [ -n "$hits" ]; then
 	printf '%s\n' "$hits"
 	problems=$((problems + 1))
+fi
+
+# REGISTER.md without its HTML comments (<!-- ... -->, the shortest match, as in perl's
+# s/<!--.*?-->//gs); a comment's line breaks stay, so line numbers still hold. The file is read as
+# one record (RS is a byte no text holds), so a long register costs no more than a short one.
+uncomment() {
+	awk 'BEGIN { RS = "\001" } { t = t $0 }
+	END {
+		while ((i = index(t, "<!--")) > 0) {
+			j = index(substr(t, i + 4), "-->")
+			if (!j) break
+			c = substr(t, i, j + 6); gsub(/[^\n]+/, "", c)
+			out = out substr(t, 1, i - 1) c; t = substr(t, i + j + 6)
+		}
+		printf "%s", out t
+	}'
+}
+# the awk that reads the entries of an uncommented REGISTER.md: a "## " line calls done(), which the
+# program defines, for the entry before it, then opens the next unless it is the template's example
+# ("## <...>"); the fields of the open entry are head, kind, sess, agent, host, since (the first of
+# each key; a placeholder is none), haiku[1..nh] (every haiku value that is not empty or a
+# placeholder) and nl (its "- haiku:" lines, placeholders and all)
+entries='
+function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+function value(  s) { s = $0; sub(/^- [a-z_]+:/, "", s); return trim(s) }
+function field(  s) { s = value(); return s ~ /^</ ? "" : s }
+function word(s) { split(s, w, /[ \t]+/); return w[1] }
+{ sub(/\r$/, "") }
+/^## / {
+	done(); head = trim(substr($0, 4)); open = head !~ /^<.*>$/
+	kind = sess = agent = host = since = ""; hk = hs = ha = hh = hw = nh = nl = 0; next
+}
+!open { next }
+/^- kind:/ && !hk++ { kind = tolower(word(field())) }
+/^- session:/ && !hs++ { sess = word(field()) }
+/^- agent:/ && !ha++ { agent = field() }
+/^- host:/ && !hh++ { host = field() }
+/^- since:/ && !hw++ { since = field() }
+/^- haiku:/ { nl++; h = field(); if (h != "") haiku[++nh] = h }
+'
+
+register=$(text REGISTER.md); regstate=$?   # 0: there, 1: not there, 2: there but unreadable
+[ "$regstate" -ne 2 ] || say "REGISTER.md is there but cannot be read: tell the user; do not recreate it (RA-11)"
+
+# RA-11: nobody is struck out of REGISTER.md, no agent's own name, host or first start changes (the
+# avatar is drawn from the name and first start), no haiku is rewritten, no session has two entries. The messages name
+# sessions and headings, never other values.
+before=$(git show HEAD:REGISTER.md 2>/dev/null) || before=""
+if [ "$regstate" -eq 0 ] || { [ "$regstate" -eq 1 ] && [ -n "$before" ]; }; then
+	while IFS= read -r line; do
+		say "RA-11: $line"
+	done < <(awk '{ g = FILENAME == ARGV[1] ? 1 : 2; if (g != f) { done(); f = g } }'"$entries"'
+		function done(  i, k) { # file f: 1 = HEAD, 2 = the checked version
+			if (!open) return
+			i = ++n[f]; K[f, i] = kind; H[f, i] = head; S[f, i] = sess; A[f, i] = agent; NH[f, i] = nh
+			HO[f, i] = host; SI[f, i] = since
+			for (k = 1; k <= nh; k++) HK[f, i, k] = haiku[k]
+			open = 0
+		}
+		function stays(i, j, who) { # entry j of the checked version keeps the host and since of entry i of HEAD
+			if (HO[1, i] != "" && HO[2, j] != HO[1, i])
+				print who ": its \"- host:\" line was changed or deleted; the host it first ran on stays"
+			if (SI[1, i] != "" && SI[2, j] != SI[1, i])
+				print who ": its \"- since:\" line was changed or deleted; the time of its first start stays (its avatar is drawn from it)"
+		}
+		function keeps(i, j,  k, l, found) { # entry j of the checked version has every haiku of entry i of HEAD
+			for (k = 1; k <= NH[1, i]; k++) {
+				found = 0
+				for (l = 1; l <= NH[2, j]; l++) if (HK[2, j, l] == HK[1, i, k]) found = 1
+				if (!found) return 0
+			}
+			return 1
+		}
+		function inscouts(i,  k, j, l, found) { # every haiku of entry i of HEAD is in some scouts entry of the checked version
+			for (k = 1; k <= NH[1, i]; k++) {
+				found = 0
+				for (j = 1; j <= n[2]; j++) if (K[2, j] == "scouts") for (l = 1; l <= NH[2, j]; l++) if (HK[2, j, l] == HK[1, i, k]) found = 1
+				if (!found) return 0
+			}
+			return 1
+		}
+		END {
+			done()
+			# one entry per session, in the checked version
+			for (j = 1; j <= n[2]; j++) {
+				if (K[2, j] == "scouts" || S[2, j] == "") continue
+				if (!(S[2, j] in one)) { one[S[2, j]] = j; continue }
+				if (!(S[2, j] in told)) print "session " S[2, j] " appears in more than one entry (\047" H[2, one[S[2, j]]] "\047, \047" H[2, j] "\047): one entry per session"
+				told[S[2, j]] = 1
+			}
+			# each entry of HEAD not of kind scouts is matched to one entry of the checked version: by its
+			# session, an entry that keeps its heading first ...
+			for (i = 1; i <= n[1]; i++) if (K[1, i] != "scouts" && S[1, i] != "") old[S[1, i]]++
+			for (j = 1; j <= n[2]; j++) if (K[2, j] != "scouts" && S[2, j] != "") at[S[2, j], ++ns[S[2, j]]] = j
+			for (pass = 1; pass <= 2; pass++) for (i = 1; i <= n[1]; i++) {
+				if (K[1, i] == "scouts" || S[1, i] == "" || (i in m)) continue
+				for (c = 1; c <= ns[S[1, i]]; c++) {
+					j = at[S[1, i], c]
+					if (!(j in used) && (pass == 2 || H[2, j] == H[1, i])) { m[i] = j; used[j] = 1; break }
+				}
+			}
+			# ... then one without a session, or a second entry of a session: by its heading (an entry
+			# without a session first), else by its agent and haiku, among the entries without a session
+			# or with one HEAD lacks. So a new agent entry never stands in for an old entry it is not.
+			for (j = 1; j <= n[2]; j++) if (K[2, j] != "scouts" && !(S[2, j] != "" && (S[2, j] in old))) free[++nf] = j
+			for (c = 1; c <= nf; c++) { j = free[c]; ath[H[2, j], ++nh2[H[2, j]]] = j }
+			for (pass = 1; pass <= 3; pass++) for (i = 1; i <= n[1]; i++) {
+				if (K[1, i] == "scouts" || (i in m) || (S[1, i] != "" && old[S[1, i]] < 2)) continue
+				for (c = 1; c <= (pass < 3 ? nh2[H[1, i]] : nf); c++) {
+					j = pass < 3 ? ath[H[1, i], c] : free[c]
+					if ((j in used) || (pass == 1 && S[2, j] != "")) continue
+					if (pass == 3 && (NH[1, i] == 0 || A[2, j] != A[1, i] || !keeps(i, j))) continue
+					m[i] = j; used[j] = 1; break
+				}
+			}
+			# entries of kind scouts: by heading, one that keeps the haiku first
+			for (pass = 1; pass <= 2; pass++) for (i = 1; i <= n[1]; i++) {
+				if (K[1, i] != "scouts" || (i in m)) continue
+				for (j = 1; j <= n[2]; j++)
+					if (!(j in used) && K[2, j] == "scouts" && H[2, j] == H[1, i] && (pass == 2 || keeps(i, j))) { m[i] = j; used[j] = 1; break }
+			}
+			for (i = 1; i <= n[1]; i++) {
+				if (K[1, i] == "scouts") {
+					scouts--
+					if (!(i in m)) { if (!inscouts(i)) lost[++nlost] = i; continue }
+					stays(i, m[i], "entry \047" H[1, i] "\047 (kind scouts)")
+					if (A[1, i] != "" && A[2, m[i]] != A[1, i])
+						print "entry \047" H[1, i] "\047 (kind scouts): its \"- agent:\" line was changed or deleted; their own name stays"
+					if (!keeps(i, m[i]))
+						print "entry \047" H[1, i] "\047 (kind scouts): a haiku of it was rewritten or deleted; a haiku, once written, stays"
+					continue
+				}
+				if (!(i in m)) {
+					if (S[1, i] != "") print "session " S[1, i] " (\047" H[1, i] "\047) was struck out of REGISTER.md"
+					else print "entry \047" H[1, i] "\047 (no session) was struck out of REGISTER.md (an entry without a session is found by its heading, else by its agent and haiku)"
+					continue
+				}
+				j = m[i]; who = S[1, i] != "" ? "session " S[1, i] " (\047" H[2, j] "\047)" : "entry \047" H[1, i] "\047 (no session)"
+				if (A[1, i] != "" && A[2, j] != A[1, i])
+					print who ": its \"- agent:\" line was changed or deleted; the agent\047s own name stays (rename the heading instead)"
+				stays(i, j, who)
+				if (!keeps(i, j)) print who ": a haiku of it was rewritten or deleted; a haiku, once written, stays"
+			}
+			for (j = 1; j <= n[2]; j++) if (K[2, j] == "scouts") scouts++
+			# a scouts entry gone with a haiku of it: struck out while their number is short, else rewritten
+			for (k = 1; k <= nlost; k++)
+				print "entry \047" H[1, lost[k]] "\047 (kind scouts)" (k <= -scouts ? " was struck out of REGISTER.md" : ": a haiku of it was rewritten or deleted; a haiku, once written, stays")
+			if (-scouts > nlost) print "an entry of kind scouts was struck out of REGISTER.md"
+		}' <(printf '%s\n' "$before" | uncomment) <(if [ "$regstate" -eq 0 ]; then printf '%s\n' "$register" | uncomment; fi))
+fi
+
+# RA-12: from card 2.2 on the register is a condition of the protocol. The card is read from the
+# preamble of HANDOFF.md only, its lines joined, so a record that mentions a card does not count.
+card22=
+printf '%s\n' "$handoff" | awk '/^## / { exit } { printf "%s ", $0 }' |
+	grep -qE 'card[[:space:]]+2\.([2-9]|[1-9][0-9])[[:space:]]+of[[:space:]]+rada-anchor' && card22=1
+# "- register: off" in the Profile: the user turned the register off, and the protocol is not run here
+printf '%s\n' "$handoff" | grep -qE '^- register:[[:space:]]*off([^[:alnum:]_]|$)' && card22=
+if [ -n "$card22" ] && [ "$regstate" -eq 1 ]; then
+	say "RA-12: REGISTER.md is missing: from card 2.2 on the register is a condition of the protocol"
+elif [ -n "$card22" ] && [ "$regstate" -eq 0 ]; then
+	# haiku lines are checked where the commit adds or changes them, so an old one never blocks
+	declare -A fresh=()
+	while IFS=$'\t' read -r n _; do fresh[$n]=1; done < <(added REGISTER.md)
+	while IFS=$'\t' read -r what where heading; do
+		case $what in
+		nosession) say "RA-12: entry '$where' has no session (write the session id's first 8 characters, or, for an agent without one, <host>-<ISO minute of its first start>, such as work-2026-09-24T14:00)" ;;
+		second) [ -z "${fresh[$where]:-}" ] || say "RA-12: REGISTER.md:$where: entry '$heading' has more than one haiku line; an entry has exactly one haiku" ;;
+		nohaiku) [ -z "${fresh[$where]:-}" ] || say "RA-12: REGISTER.md:$where: the haiku line holds no haiku (it is empty or a <placeholder>): write the haiku, or leave the line out until you do" ;;
+		form) [ -z "${fresh[$where]:-}" ] || say "RA-12: REGISTER.md:$where: a haiku is three non-empty lines, split by \" | \"" ;;
+		esac
+	done < <(printf '%s\n' "$register" | uncomment | awk "$entries"'
+		function done(  k) {
+			if (!open) return
+			if (kind != "scouts" && sess == "") print "nosession\t" head
+			for (k = 1; k <= nl; k++) {
+				if (nl > 1) print "second\t" L[k] "\t" head
+				else if (P[k] != "") print P[k] "\t" L[k]
+			}
+			open = 0
+		}
+		/^- haiku:/ {
+			L[nl] = NR; P[nl] = ""; h = value()
+			if (h == "" || h ~ /^</) P[nl] = "nohaiku"
+			else if (split(h, p, / \| /) != 3 || trim(p[1]) == "" || trim(p[2]) == "" || trim(p[3]) == "") P[nl] = "form"
+		}
+		END { done() }')
 fi
 
 [ "$problems" -eq 0 ]

@@ -1,15 +1,15 @@
 # Handoff · rada-anchor/2
 
 Current state only, read at every start, at most 8,000 characters. Rules:
-card 2.1 of rada-anchor (https://github.com/kewl-ua/rada-anchor/blob/v2.1/RULES.md),
-loaded with the agents' instructions. History: `JOURNAL.md` and git.
+card 2.2 of rada-anchor (https://github.com/kewl-ua/rada-anchor/blob/v2.2/RULES.md),
+loaded with the agents' instructions. History: `JOURNAL.md` and git. The agents: `REGISTER.md`.
 Lasting knowledge: <the project guide, e.g. CLAUDE.md>.
 
 ## Profile
 
 - hosts: `home` = <what the user calls it> · `work` = <...> (claims add the session: `home/1a2b3c4d`)
 - branch: `main` (claims and end commits go here) · claim_ttl: 12h (optional: delete it and claims never expire)
-- language: <the user's language> with the user; English in files
+- language: <the user's language> with the user; English in files, except the register's tribute, haiku and header texts
 - repos: `~/<other repo>` · `~/<another>` (each gets a `Rada-Repo` trailer; or "none")
 
 ## Live

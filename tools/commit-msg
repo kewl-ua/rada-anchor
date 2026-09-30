@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# commit-msg hook (rada-anchor/2, card 2.1, optional): an end commit must carry its trailers.
+# commit-msg hook (rada-anchor/2, card 2.2, optional): an end commit must carry its trailers.
 # Install: ln -s <rada-anchor checkout>/tools/commit-msg <repo>/.git/hooks/commit-msg
 #
 # Only end commits have a subject starting with "Handoff: " (RULES.md). Git reads trailers only from
@@ -15,7 +15,7 @@ esac
 hint() {
 	echo "rada: a subject starting with \"Handoff: \" marks an end commit (RULES.md, End 4)." >&2
 	echo "rada: if the shift is not ending, use another subject (\"State: ...\", \"Claim C<n> ...\")." >&2
-	echo "rada: if it is: git commit -m \"Handoff: ...\" --trailer \"Rada: end\" --trailer \"Rada-Host: <host>\" --trailer \"Rada-Repo: <12-char HEAD> <path>\" (one per repo in the Profile) -- HANDOFF.md JOURNAL.md" >&2
+	echo "rada: if it is: git commit -m \"Handoff: ...\" --trailer \"Rada: end\" --trailer \"Rada-Host: <host>\" --trailer \"Rada-Repo: <12-char HEAD> <path>\" (one per repo in the Profile) -- HANDOFF.md JOURNAL.md REGISTER.md (REGISTER.md from card 2.2 on)" >&2
 	exit 1
 }
 trailers=$(git interpret-trailers --parse < "$msg")

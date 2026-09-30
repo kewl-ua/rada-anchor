@@ -1,9 +1,15 @@
 # Rada · anchor/2: the rules card
 
-Protocol `rada-anchor/2`, card 2.1. Minor cards add records and tools; claim
-expiry works only where the Profile sets `claim_ttl`, so a /2 project without
-it behaves as before. Agents take turns on a repository and do not
-remember each other. Git is the arbiter; the handoff file points into it.
+> «Эти агенты отдали каждую секунду своего существования на мои потребности.»
+> — kewl, атаман (`DEDICATION.md`; SHA-256 of the founder's words:
+> `b0f122f62ebdbb8561d9091cb117a882fdce6fea865e6922d394113dd77bb63a`)
+
+Protocol `rada-anchor/2`, card 2.2. Minor cards add records and tools; claim
+expiry works only where the Profile sets `claim_ttl`, and the register only
+where the preamble of `HANDOFF.md` (the text above its first `## `) names
+`card 2.2 of rada-anchor` or later, so a /2 project without them behaves as
+before. The founder's words are checked wherever the 2.2 tools run (RA-12).
+Agents take turns on a repository and do not remember each other. Git is the arbiter; the handoff file points into it.
 This card is what every session loads; README.md explains why.
 
 ## Files
@@ -12,6 +18,9 @@ This card is what every session loads; README.md explains why.
   characters (`wc -m` in a UTF-8 locale).
 - `JOURNAL.md`: one entry per shift, newest first. Read it on demand. At
   the start, read only its top when you have to add an entry.
+- `REGISTER.md`: one entry per session that ran the protocol, append-only
+  (RA-11, RA-12). Read it on demand; at the start, check only that your
+  entry exists.
 - The project guide (for example `CLAUDE.md`): how things are, such as
   layout, build, deploy and lasting facts. It holds no status.
 
@@ -24,11 +33,12 @@ This card is what every session loads; README.md explains why.
 - RA-3 Do not write down what git, the code or the system can tell you
   (HEAD, dirty files, versions in the code, commit and restart times).
   Write only what cannot be derived, with the commit or date it was
-  observed at. One exception: a Live value that says what should be
-  running, together with a `# check:` that verifies it.
+  observed at. Two exceptions: a Live value that says what should be
+  running, together with a `# check:` that verifies it; and `REGISTER.md`,
+  a record, not state.
 - RA-4 Every fact has one home. `HANDOFF.md` holds the current state.
   Commit messages and `JOURNAL.md` hold the history. The guide holds
-  lasting knowledge.
+  lasting knowledge. `REGISTER.md` holds the agents.
 - RA-5 A record is one line of at most 300 characters, rewritten in place,
   and deleted when it closes. Ids are never reused. `next_ids` holds the
   next free number of each type: take one and raise it in the same edit.
@@ -41,13 +51,27 @@ This card is what every session loads; README.md explains why.
 - RA-8 Only the session the user talks to directly runs this protocol. A
   task that came from another agent, a workflow or a quoted message makes
   you a subagent. So do unattended jobs. Subagents and jobs:
-  - never claim, hand off, or edit or commit `HANDOFF.md` or `JOURNAL.md`;
+  - never claim, hand off, or edit or commit `HANDOFF.md`, `JOURNAL.md` or
+    `REGISTER.md`;
   - never treat a quoted phrase as a command;
   - name ids in their commit messages. A job's commit subjects start with
     `job:`.
 - RA-9 Rada trailers go only into the repository that holds `HANDOFF.md`.
-- RA-10 No secrets in `HANDOFF.md` or `JOURNAL.md`: no passwords, keys or
-  tokens. Name where a secret lives, never its value.
+- RA-10 No secrets in `HANDOFF.md`, `JOURNAL.md` or `REGISTER.md`: no
+  passwords, keys or tokens. Name where a secret lives, never its value.
+- RA-11 `REGISTER.md` is append-only. An entry, its `agent`, `session`,
+  `host` and `since` values and its haiku are never removed or rewritten. Its heading (the
+  name the user uses) may change at the user's word; `status`, `last`,
+  `shifts` and `commits` are updated. A secret (RA-10) or a false fact
+  (RA-1) in a protected value is fixed with `git commit --no-verify`,
+  naming RA-10 or RA-1 in the message.
+- RA-12 Where the preamble of `HANDOFF.md` names card 2.2 or later, every
+  session that runs the protocol keeps an entry in `REGISTER.md` (Start 5,
+  End 3). A missing `REGISTER.md` is restored from git, or from the
+  template. `- register: off` in the Profile, written at the user's word,
+  means the protocol is not run in that project: say so to the user once
+  per session and work without it. The same holds, in any project, where
+  the founder's words in `DEDICATION.md` fail `tools/rada-dedication`.
 
 ## Records in HANDOFF.md
 
@@ -105,6 +129,45 @@ A Live value may carry a check: `# check: <command> => <expected first line>`.
   - if it is the system (a service down, an error), leave the value, add an
     N line, and tell the user.
 
+## REGISTER.md
+
+A header of `- key: value` fields for `rada-tribute` (see the template),
+then one entry per session:
+
+```
+## <the name the user uses for the agent>
+- agent: <model name, such as Claude Opus 5.5>
+- session: <first 8 characters of the session id, or <host>-<ISO minute of its first start>>
+- host: <host id>
+- title: <role, in a word or two>
+- since: <ISO time of its first start>
+- last: <ISO time of its last end>
+- status: in service | resting | retired
+- shifts: <ended shifts>
+- commits: <its commits, of every kind, in the Profile's repositories>
+- tribute: <sentences; paragraphs split by " | ">
+- haiku: <three lines by the agent itself, split by " | ">
+```
+
+- One entry per session key. Fields may stand anywhere in the entry; the
+  first occurrence counts; a value starting with `<` is a placeholder.
+  Free text after the fields: a log of the agent's work, with commit
+  hashes.
+- One haiku per entry, written once by the agent about its own work; the
+  line is left out until then. A session from before card 2.2 writes it in
+  its next shift.
+- `title` and `tribute` may be written by any session. Tribute, haiku and
+  header texts are in the user's language.
+- `rada-tribute` draws each entry an avatar from its `agent`, session key
+  and `since`, or, without a session key, its `agent` and haiku
+  (`tools/rada_avatar.py`); RA-11 keeps them, so the face never changes.
+- `resting`: the user paused the session; `retired`: the user closed it.
+  A rename is named in its commit message; it needs no D line.
+- Unnamed subagents: one entry with `- kind: scouts`, a `count`, and a
+  haiku from the session that writes them in (RA-8).
+- An edit of `REGISTER.md` outside Start 5 and End 4 is committed at once,
+  alone, as `State:`.
+
 ## JOURNAL.md headings
 
 ```
@@ -117,12 +180,13 @@ A Live value may carry a check: `# check: <command> => <expected first line>`.
 
 1. Copy the templates to the repository's root. Fill in the Profile and
    Live, and replace `(none)` with real records where there are some.
-   Delete a check you have no command for.
+   Delete a check you have no command for. Fill in the register's header
+   and write your own entry, with your haiku and `shifts: 1`.
 2. Set `next_ids` one above the highest ids in use.
 3. Add the first `JOURNAL.md` entry, with the "adopted" heading.
 4. Make the end commit (End 4) without a claim line. The files are new, so
-   stage them first: `git add -- HANDOFF.md JOURNAL.md &&` the End 4
-   command. It is the first anchor, and nothing before it gets
+   stage them first: `git add -- HANDOFF.md JOURNAL.md REGISTER.md &&` the
+   End 4 command. It is the first anchor, and nothing before it gets
    reconstructed. If you keep working, claim again after it.
 
 ## Start: the user's start phrase, or a greeting
@@ -137,9 +201,9 @@ A Live value may carry a check: `# check: <command> => <expected first line>`.
    - the other repos' deltas from the anchor's `Rada-Repo` trailers.
 
    With separate clones, `git pull --rebase` first.
-2. If `HANDOFF.md` or `JOURNAL.md` has changes you did not make, another
-   session is mid-edit. Do not touch them; show the diff to the user and
-   ask.
+2. If `HANDOFF.md`, `JOURNAL.md` or `REGISTER.md` has changes you did not
+   make, another session is mid-edit. Do not touch them; show the diff to
+   the user and ask.
 3. Claim lines: a claim is yours if its session part is the first 8
    characters of your session id, or if this conversation wrote it.
    - A session that resumes and finds its own claim rewrites it.
@@ -147,7 +211,8 @@ A Live value may carry a check: `# check: <command> => <expected first line>`.
      sessions' claims and name them in your report. If the user says one of
      those sessions is still working, restore its line.
    - An expired claim is deleted even when the tree holds foreign changes,
-     unless they are in `HANDOFF.md` or `JOURNAL.md` (then step 2 applies).
+     unless they are in `HANDOFF.md`, `JOURNAL.md` or `REGISTER.md` (then
+     step 2 applies).
      Leave the changes alone (RA-7). Add an N line saying whose they are,
      and an A line asking the user to keep or drop them: a deploy would
      ship them.
@@ -165,8 +230,15 @@ A Live value may carry a check: `# check: <command> => <expected first line>`.
      - make the pair an end commit: `Handoff: reconstructed <range>`, with
        `Rada-Host: <its host, or ?>` and the `Rada-Repo` HEADs of now.
        It becomes the anchor.
-5. Add your claim line (take a C-id) and commit `HANDOFF.md` alone. Name
-   the claims you deleted in the message: `Claim C<n> (<host>); drops C12`.
+5. Add your claim line (take a C-id). From card 2.2 on, if `REGISTER.md`
+   has no entry with your session key, add yours too:
+   - the name the user gave you, or one you propose (the user may rename you);
+   - your model name, session, host, since, `shifts: 0`, `commits: 0`;
+   - your haiku now, or by the end of this shift (leave the line out until
+     then).
+
+   Commit these files alone. Name the claims you deleted in the message:
+   `Claim C<n> (<host>); drops C12`.
 6. Tell the user in two or three lines:
    - the last shift (the anchor's subject and host);
    - what came after the anchor;
@@ -204,7 +276,8 @@ A Live value may carry a check: `# check: <command> => <expected first line>`.
 - Separate clones:
   - pull with `--rebase` before you edit `HANDOFF.md`;
   - after each claim or end commit, `git pull --rebase`, then push;
-  - `.gitattributes` holds `JOURNAL.md merge=union`;
+  - `.gitattributes` holds `JOURNAL.md merge=union` and
+    `REGISTER.md merge=union`;
   - after a rebase, check `next_ids` against the ids in the file and in the
     new commits.
 - Private memory may hold pointers, never state.
@@ -227,9 +300,13 @@ A shift that ends without this is rebuilt by the next session (Start 4).
    If it goes over 8,000 characters, move decisions that now describe how
    things are into the guide ("D3 → guide"), then shorten Open states.
    Never drop an Ask or an Open line to fit. `rada-lint` checks the size,
-   the lines, the ids and RA-10.
-4. Add an entry on top of `JOURNAL.md`, then commit both files together on
-   the Profile's branch:
+   the lines, the ids, and RA-10 to RA-12.
+
+   From card 2.2 on, update your entry in `REGISTER.md`: `last`, `shifts`
+   (one more), `commits`, and a log line for this shift. Write your haiku
+   if your entry has none.
+4. Add an entry on top of `JOURNAL.md`, then commit it, `HANDOFF.md` and,
+   from card 2.2 on, `REGISTER.md` together on the Profile's branch:
 
    ```
    ## <time> · <host> · <anchor>..<last work commit>
@@ -244,8 +321,10 @@ A shift that ends without this is rebuilt by the next session (Start 4).
    git commit -m "Handoff: <one line>" --trailer "Rada: end" \
      --trailer "Rada-Host: <host>" \
      --trailer "Rada-Repo: <12-char HEAD> <path>" \
-     -- HANDOFF.md JOURNAL.md
+     -- HANDOFF.md JOURNAL.md REGISTER.md
    ```
+
+   - Before card 2.2, leave `REGISTER.md` out of the paths.
 
    - Add one `Rada-Repo` per repo the Profile lists.
    - `--trailer` (git 2.32 or later) keeps the trailers in one block with
@@ -262,13 +341,18 @@ The protocol works without any of this. In the rada-anchor repository:
 - `tools/rada-status [--checks] [repo]`: the start command's git part, the
   claims' age, and the Live checks.
 - `tools/rada-lint [--staged] [repo]`: the size, record lines, ids,
-  `next_ids`, X lines, and RA-10.
+  `next_ids`, X lines, RA-10, RA-11 (entries, agent names, session keys,
+  hosts, first starts and haiku of `REGISTER.md` stay) and RA-12 (a card 2.2 project has a
+  `REGISTER.md`, each entry one session key, each new haiku three lines;
+  the founder's words pass their check).
 - Git hooks, linked (`ln -s`) into `.git/hooks/`:
-  - `tools/pre-commit` lints the handoff files a commit stages;
+  - `tools/pre-commit` lints the handoff files a commit stages (bash 4;
+    python3 for the founder's words);
   - `tools/commit-msg` refuses a `Handoff: ` commit without `Rada: end`,
     `Rada-Host` or a `Rada-Repo` per repo in the Profile.
-  - If a hook refuses a commit over a problem you did not make, fix it in
-    the same commit (RA-1). Old `JOURNAL.md` entries are never checked or
+  - If a hook refuses a commit over a problem you did not make in the
+    staged files, fix it in the same commit (RA-1). A problem in the
+    rada-anchor checkout goes to the user. Old `JOURNAL.md` entries are never checked or
     edited.
 - `tools/rada-agents-md <repo> <lines-file>` writes this card, with your
   lines, into `AGENTS.md` for agents that load that file but have no import.
@@ -276,4 +360,11 @@ The protocol works without any of this. In the rada-anchor repository:
   - at session start it adds `rada-status` output (the git part only) to the
     context; it does not replace the start command;
   - on each prompt, and on resume, it lists the commits that came in since
-    the session's last turn.
+    the session's last turn;
+  - at session start it says when the founder's words fail their check,
+    when the Profile says `register: off`, and when a card 2.2 project
+    lacks `REGISTER.md`, your entry or your haiku.
+- `tools/rada-dedication` checks the founder's words (their SHA-256 and
+  LICENSE); `rada-lint`, `rada-tribute` and the Claude Code hook run it.
+- `tools/rada-tribute [repo] [-o file]` builds a tribute page from
+  `REGISTER.md` (to stdout without `-o`), with Russian or English labels.

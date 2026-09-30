@@ -1,0 +1,912 @@
+#!/usr/bin/env python3
+"""rada-tribute: a tribute page built from REGISTER.md (rada-anchor/2, card 2.2; optional tooling).
+
+Usage: rada-tribute [repo] [-o FILE]
+
+Reads <repo>/REGISTER.md and writes one self-contained HTML page to FILE, or to stdout without -o,
+in the grammar of the 1984 film: the founder's words fixed at the top, a chrome title card, captions
+and opening text typed out on black as by a carriage, in a square monospace with a phosphor glow,
+film grain and boiling edges, each agent seen through the machine's red vision with a typed analysis
+(its human name and its own agent name side by side) and its avatar, the response menu, the user's
+coda if any, the founder's coda, a final line with the seal of the founder's words under it, and a
+plain reading version. The founder's words come from DEDICATION.md of the rada-anchor checkout this
+tool lives in, checked by tools/rada-dedication; if they were changed, no page is made (exit 1). An
+English page shows their translation, or the Russian original where the translation is missing. It
+needs no network except the fonts; its sound is synthesized in the page (an original drone and metal,
+the keys and the carriage, started by a button). A music link from the register opens in a new tab:
+pages usually cannot embed video sites. Exit 2 on other errors (usage, no register, no entries, a
+check that could not be run, a file it cannot write, no tools/rada_avatar.py next to this tool).
+
+Avatars (tools/rada_avatar.py, imported from this tool's directory): every entry gets a wireframe
+solid drawn from a seed, the SHA-256 of its identity: its agent, session key and since, or, without
+a session key (scouts), its agent and haiku (the exact rule is in rada_avatar's docstring). So an agent
+keeps its face from page to page, and a change of one character in those fields gives another face.
+The large avatar turns slowly in the red vision in place of the reticle, the readout types its
+signature (the seed's first 8 hex digits) after the session, and a small, still one stands before the
+entry's heading in the reading version.
+
+REGISTER.md (see template/REGISTER.md). Fields are "- key: value" lines. Several paragraphs in one
+field are separated by " | ". The first line of a key counts; an empty value or one starting with
+"<" (a placeholder) is absent, so the defaults of the page's language apply.
+  Header, before the first "## ": title, language (ru or en; anything else gets English labels),
+  project, epigraph ("words — who"; shown on the title card unless it is the founder's quote),
+  opening (captions), prologue, epilogue, menu (the answers; the cursor stops on the last), coda (the
+  user's last word, typed on black before the founder's coda, unless it is the founder's coda),
+  coda_by (who said it and when, typed under it), final, final_sub, music (an http or https link),
+  hud.
+  An entry, anywhere in its block from its "## Name" (the name people call it by) to the next "## ":
+  agent (its own name, such as Claude Opus 5.5), session, host, title, since, last, status (in
+  service, resting, retired), shifts, commits, tribute, haiku (its three lines split by " | "),
+  hashes. An entry with "- kind: scouts" is a group of unnamed subagents; it takes agent, count,
+  tribute and haiku. A "## <...>" heading is the template's example, not an entry.
+HTML comments (<!-- ... -->) are not data: the template's example entry stays out of the page.
+rada-lint and the hook read the fields the same way. Everything else in the file is for people and
+is left out of the page.
+"""
+
+import html
+import json
+import os
+import re
+import subprocess
+import sys
+
+sys.dont_write_bytecode = True      # rada_avatar is imported from here without leaving __pycache__ in the checkout
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+try:
+    import rada_avatar
+except ImportError:
+    rada_avatar = None
+
+HEADER_KEYS = {"title", "language", "project", "epigraph", "opening", "prologue", "epilogue", "final",
+               "final_sub", "music", "hud", "menu", "coda", "coda_by"}
+ENTRY_KEYS = {"agent", "session", "host", "title", "since", "last", "status", "shifts", "commits", "tribute",
+              "haiku", "stat", "hashes", "kind", "count"}
+FIELD = re.compile(r"^- ([a-z_]+):(.*)$")
+EXAMPLE = re.compile(r"<.*>")  # "## <...>": the template's example heading, not an entry
+COMMENT = re.compile(r"<!--.*?-->", re.S)  # an unclosed "<!--" is text, as Markdown shows it
+USAGE = "usage: rada-tribute [repo] [-o FILE]"
+
+LABELS = {
+    "ru": {"title": "Реестр Рады", "episode": "Эпизод I", "start": "▶ Начать", "sound_off": "Звук: выкл",
+           "sound_on": "Звук: вкл", "music": "Музыка ↗", "read": "Читать текстом", "pause": "Пауза",
+           "resume": "Продолжить", "again": "Смотреть снова", "watch": "▶ Смотреть",
+           "note": "Музыка откроется в соседней вкладке. «Звук» включает здешнюю атмосферу: гул, металл, аккорды и стук каретки.",
+           "note_nomusic": "«Звук» включает атмосферу: гул, металл, аккорды и стук каретки.",
+           "sessions": "Сессий", "scouts": "Разведчиков", "commits": "Коммитов", "mode": "Режим: трибьют",
+           "analysis": "Анализ: агенты Рады", "kicker": "Рада · anchor · трибьют", "sub": "В честь агентов, служивших по протоколу «Рада · anchor»"},
+    "en": {"title": "The Rada Register", "episode": "Episode I", "start": "▶ Start", "sound_off": "Sound: off",
+           "sound_on": "Sound: on", "music": "Music ↗", "read": "Read as text", "pause": "Pause",
+           "resume": "Resume", "again": "Watch again", "watch": "▶ Watch",
+           "note": "The music opens in a new tab. “Sound” plays the page's own drone, metal, chords and the clatter of the carriage.",
+           "note_nomusic": "“Sound” plays the page's own drone, metal, chords and the clatter of the carriage.",
+           "sessions": "Sessions", "scouts": "Scouts", "commits": "Commits", "mode": "Mode: tribute",
+           "analysis": "Analysis: Rada agents", "kicker": "Rada · anchor · tribute", "sub": "In honour of the agents who served under “Rada · anchor”"},
+}
+
+
+def parse(text):
+    """The header and the entries, read as rada-lint and the hook read them: a field anywhere in its block,
+    the first line of a key wins, an empty value or a "<placeholder>" is absent."""
+    header, entries, cur, keys, seen = {}, [], None, HEADER_KEYS, set()
+    # lines split on LF only and a comment keeps its line breaks, as rada-lint reads the file
+    for line in COMMENT.sub(lambda c: "\n" * c.group().count("\n"), text).split("\n"):
+        line = line.rstrip("\r")
+        if line.startswith("## "):
+            name = line[3:].strip()
+            cur, keys, seen = {"name": name}, ENTRY_KEYS, set()
+            if not EXAMPLE.fullmatch(name):
+                entries.append(cur)  # the example's block is read into cur and dropped
+            continue
+        m = FIELD.match(line)
+        if not m or m.group(1) not in keys:
+            continue
+        key, value = m.group(1), m.group(2).strip()
+        if key == "kind":
+            value = value.lower().split()[0] if value else ""  # its first word, as rada-lint reads it
+        if key in seen:
+            continue  # the first line of a key wins, even when it holds a placeholder
+        seen.add(key)
+        if value and not value.startswith("<"):
+            (header if cur is None else cur)[key] = value
+    # a heading with no fields under it is prose; an entry without a session is still shown (rada-lint asks for one)
+    return header, [e for e in entries if ENTRY_KEYS & e.keys()]
+
+
+def paras(value):
+    return [p.strip() for p in (value or "").split(" | ") if p.strip()]
+
+
+def esc(s):
+    return html.escape(s, quote=True)
+
+
+STATUS = {
+    "ru": {"in service": "В СТРОЮ", "resting": "НА ПРИВАЛЕ", "retired": "НА ПОКОЕ"},
+    "en": {"in service": "IN SERVICE", "resting": "RESTING", "retired": "RETIRED"},
+}
+READOUT = {
+    "ru": {"name": "ИДЕНТИФИКАЦИЯ", "agent": "АГЕНТ", "role": "РОЛЬ", "session": "СЕССИЯ", "signature": "СИГНАТУРА", "host": "КУРЕНЬ",
+           "since": "НА СЛУЖБЕ С", "last": "ПОСЛЕДНИЙ СИГНАЛ", "shifts": "СМЕН", "commits": "КОММИТОВ",
+           "status": "СТАТУС", "count": "ЧИСЛЕННОСТЬ", "scan": "АНАЛИЗ", "menu": "ОТВЕТ:",
+           "menu_default": ["ЗАКРЫТЬ СЕССИЮ", "ЗАБЫТЬ", "ВПИСАТЬ В РЕЕСТР"], "final": "Я ВЕРНУСЬ.", "haiku": "ХОККУ",
+           "seal": "ПЕЧАТЬ СЛОВ АТАМАНА · SHA-256", "translated": "", "tr": ""},
+    "en": {"name": "IDENTIFIED", "agent": "AGENT", "role": "ROLE", "session": "SESSION", "signature": "SIGNATURE", "host": "HOST",
+           "since": "IN SERVICE SINCE", "last": "LAST SIGNAL", "shifts": "SHIFTS", "commits": "COMMITS",
+           "status": "STATUS", "count": "COUNT", "scan": "ANALYSIS", "menu": "RESPONSE:",
+           "menu_default": ["CLOSE SESSION", "FORGET", "WRITE INTO THE REGISTER"], "final": "I'LL BE BACK.", "haiku": "HAIKU",
+           "seal": "THE ATAMAN'S WORDS, SEALED · SHA-256", "translated": " (translated from Russian; the seal is of the original)",
+           "tr": " (tr.)"},
+}
+
+
+def when(iso):
+    """2026-09-24T14:00+02:00 -> 24.09.2026 14:00 (as written; no time zone arithmetic)."""
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?", iso or "")
+    if not m:
+        return iso or ""
+    y, mo, d, h, mi = m.groups()
+    return f"{d}.{mo}.{y}" + (f" {h}:{mi}" if h else "")
+
+
+def dedication():
+    """The founder's words from DEDICATION.md, checked by tools/rada-dedication next to this tool, as (words, 0);
+    (None, 1) if they are not intact or the tool is missing, (None, 2) if it could not be run."""
+    tools = os.path.dirname(os.path.realpath(__file__))
+    tool, root = os.path.join(tools, "rada-dedication"), os.path.dirname(tools)
+    if not os.path.isfile(tool):
+        print(f"rada-tribute: tools/rada-dedication is missing from the rada-anchor checkout at {root}; the "
+              "founder's words travel with rada-anchor unchanged, so this checkout is not rada-anchor (RULES.md, "
+              "RA-12). Tell the user; do not edit the checkout.", file=sys.stderr)
+        return None, 1
+    try:  # run by this interpreter, so a lost exec bit or a system without shebangs does not matter
+        done = subprocess.run([sys.executable or "python3", tool, "--json"], capture_output=True, text=True,
+                              timeout=20)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        why = "it timed out" if isinstance(e, subprocess.TimeoutExpired) else e.strerror or str(e)
+        print(f"rada-tribute: could not run tools/rada-dedication ({why}), so the founder's words were not "
+              "checked and no page is made", file=sys.stderr)
+        return None, 2
+    if done.returncode != 0:
+        print((done.stdout + done.stderr).strip(), file=sys.stderr)
+        return None, 1
+    try:
+        words = json.loads(done.stdout)
+    except ValueError:
+        print("rada-tribute: tools/rada-dedication --json printed no words, so they were not checked and no "
+              "page is made", file=sys.stderr)
+        return None, 2
+    return words, 0
+
+
+def same(a, b):
+    """The same words, whatever the quotes and spacing."""
+    def norm(t):
+        return " ".join(re.sub("[«»“”\"]", "", t or "").split())
+    return norm(a) == norm(b)
+
+
+def warn(message):
+    print(f"rada-tribute: {message}", file=sys.stderr)
+
+
+def build(header, entries, words):
+    lang = header.get("language", "")
+    if lang not in LABELS:
+        warn(f"language {lang!r} is neither ru nor en; the labels are in English" if lang
+             else "no language in the header; the labels are in English")
+        lang = "en"
+    L, R, S = LABELS[lang], READOUT[lang], STATUS[lang]
+    title = header.get("title") or L["title"]
+    agents = [e for e in entries if e.get("kind") != "scouts"]
+    scouts = [e for e in entries if e.get("kind") == "scouts"]
+    commits = sum(int(e["commits"]) for e in agents if (e.get("commits") or "").isdigit())
+    counts = [e["count"] for e in scouts if e.get("count")]
+    scout_count = str(sum(int(c) for c in counts)) if all(c.isdigit() for c in counts) else " + ".join(counts)
+    quote_text, _, quote_who = (header.get("epigraph") or "").partition(" — ")
+    quote_who = "" if quote_who.strip().startswith("<") else quote_who.strip()
+    # the founder's words travel with every page: his quote on top, his coda before the final line. An English
+    # page shows their translation; where a line of it is missing, the Russian original stands in its place
+    en = lang == "en"
+    by_en = words.get("by_en") or words["by"]
+    quote_tr = bool(en and words.get("epigraph_en"))
+    founder_quote = words["epigraph_en"] if quote_tr else words["epigraph"]
+    founder_who = (by_en if quote_tr else words["by"]).split(" · ")[0] + (R["tr"] if quote_tr else "")
+    coda_tr = bool(en and words.get("coda_en"))
+    founder_coda = words["coda_en"] if coda_tr else words["coda"]
+    founder_by = by_en + R["translated"] if coda_tr else words["by"]
+    # the register's own words are left out where they are the founder's, in either language
+    own_quote = quote_text if quote_text and not any(same(quote_text, words.get(k)) for k in ("epigraph", "epigraph_en")) else ""
+    own_coda = paras(header.get("coda"))
+    if own_coda and any(same(" ".join(own_coda), " ".join(words.get(k) or [])) for k in ("coda", "coda_en")):
+        own_coda = []
+    final, final_sub = header.get("final") or R["final"], header.get("final_sub", "")
+
+    def readout(e, seed):
+        rows = [(R["name"], e["name"].upper())]
+        if e.get("agent"):
+            rows.append((R["agent"], e["agent"].upper()))
+        if e.get("title"):
+            rows.append((R["role"], e["title"].upper()))
+        if e.get("session"):
+            rows.append((R["session"], e["session"].upper()))
+        rows.append((R["signature"], seed[:8].upper()))    # the avatar's, from its seed
+        if e.get("host"):
+            rows.append((R["host"], e["host"].upper()))
+        if e.get("since"):
+            rows.append((R["since"], when(e["since"])))
+        if e.get("last"):
+            rows.append((R["last"], when(e["last"])))
+        for key in ("shifts", "commits", "count"):
+            if e.get(key):
+                rows.append((R[key], e[key]))
+        if e.get("status"):
+            rows.append((R["status"], S.get(e["status"].lower(), e["status"].upper())))
+        return rows
+
+    # each unit's avatar: its seed from its identity, drawn large for the red vision and small for the reading version
+    units = [(e, rada_avatar.identity_seed(e)) for e in agents + scouts]
+    data = {
+        "opening": paras(header.get("opening")) or [title.upper()],
+        "prologue": paras(header.get("prologue")),
+        "epilogue": paras(header.get("epilogue")),
+        "units": [{"readout": readout(e, seed), "tribute": paras(e.get("tribute")), "haiku": paras(e.get("haiku")),
+                   "avatar": rada_avatar.avatar_svg(seed, 200)} for e, seed in units],
+        "menu": paras(header.get("menu")) or R["menu_default"],
+        "coda": own_coda, "codaBy": header.get("coda_by", "") if own_coda else "",
+        "founder": founder_coda, "founderBy": founder_by,
+        "seal": words["sha256"], "sealLabel": R["seal"],
+        "menuLabel": R["menu"], "scan": R["scan"], "haikuLabel": R["haiku"],
+        "labels": {"on": L["sound_on"], "off": L["sound_off"], "pause": L["pause"], "resume": L["resume"]},
+    }
+    # inside <script>: no "<", ">" or "&" as such, so no "</script>" or "<!--" can end or bend it
+    data_json = (json.dumps(data, ensure_ascii=False)
+                 .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
+
+    def names(e):
+        agent = f' <span class="agentname">· {esc(e["agent"].upper())}</span>' if e.get("agent") else ""
+        return f'{esc(e["name"].upper())}{agent}'
+
+    # the project's own epigraph, on the title card and under the reading version's title
+    epigraph = (f'<p class="epi">{esc(own_quote)}{" — " + esc(quote_who) if quote_who else ""}</p>' if own_quote else "")
+    ru = ' lang="ru"' if en else ""                       # the founder's original on an English page
+    reading = [f'<p class="kicker">{esc(L["kicker"])}</p><h1 tabindex="-1">{esc(title)}</h1>', epigraph]
+    reading += [f"<p>{esc(p)}</p>" for p in data["prologue"]]
+    for e, seed in units:
+        reading.append(f"<h2>{rada_avatar.avatar_svg(seed, 64)}<span>{names(e)}</span></h2>")
+        facts = " · ".join(f"{k}: {v}" for k, v in readout(e, seed)[1:])
+        reading.append(f'<p class="stat">{esc(facts)}</p>')
+        reading += [f"<p>{esc(p)}</p>" for p in paras(e.get("tribute"))]
+        if e.get("haiku"):
+            reading.append('<p class="haiku">' + "<br>".join(esc(line) for line in paras(e["haiku"])) + "</p>")
+    reading += [f"<p>{esc(p)}</p>" for p in data["epilogue"]]
+    if data["coda"]:
+        cite = f'<cite>— {esc(data["codaBy"])}</cite>' if data["codaBy"] else ""
+        reading.append('<blockquote class="coda">' + "".join(f"<p>{esc(p)}</p>" for p in data["coda"]) + cite + "</blockquote>")
+    reading.append(f'<blockquote class="coda"{"" if coda_tr else ru}>' + "".join(f"<p>{esc(p)}</p>" for p in data["founder"])
+                   + f'<cite>— {esc(data["founderBy"])}</cite></blockquote>')
+    # the film's last screen: the final line, the line under it, and the seal as one string, to copy and check
+    reading.append(f'<p class="final">{esc(final)}</p>' + (f'<p class="final-sub">{esc(final_sub)}</p>' if final_sub else ""))
+    reading.append(f'<p class="seal"><span>{esc(data["sealLabel"])}</span><span class="hash">{esc(data["seal"])}</span></p>')
+
+    ticker_items = []
+    for e in agents:
+        ticker_items.append(e.get("session", ""))
+        ticker_items += (e.get("hashes") or "").split()
+    ticker_items = [t for t in ticker_items if t] or ["rada-anchor"]
+    pairs = [" · ".join(ticker_items[i:i + 2]) for i in range(0, len(ticker_items), 2)]
+    music = header.get("music", "")
+    if music and not re.fullmatch(r"https?://\S+", music, re.I):
+        warn("the music link is not an http or https URL; the page goes without it")
+        music = ""
+    music_btn = (f'<a class="btn" href="{esc(music)}" target="_blank" rel="noopener">{esc(L["music"])}</a>' if music else "")
+    opening_mark, closing_mark = ("“", "”") if quote_tr else ("«", "»")
+    quote = (f'<blockquote class="quote"{"" if quote_tr else ru}><p>{opening_mark}{esc(founder_quote)}{closing_mark}</p>'
+             f'<cite>{esc(founder_who)}</cite></blockquote>')
+    hud_extra = f"<br>{esc(header['hud'])}" if header.get("hud") else ""
+    sub = f'{L["sub"]} · {header["project"]}' if header.get("project") else L["sub"]
+
+    values = {
+        "LANG": lang, "TITLE": esc(title), "TITLE_CARD": esc(title.upper()).replace(" ", "<br>", 1), "SUB": esc(sub),
+        "QUOTE": quote, "EPIGRAPH": epigraph, "TICKER": "<br>".join(esc(p) for p in pairs * 2),
+        "HUD_BR": f'{esc(L["sessions"])}: <b>{len(agents)}</b> · {esc(L["scouts"])}: <b>{esc(scout_count)}</b><br>{esc(L["commits"])}: <b>{commits}</b>{hud_extra}',
+        "START": esc(L["start"]), "SOUND_OFF": esc(L["sound_off"]), "MUSIC_BTN": music_btn, "READ": esc(L["read"]),
+        "NOTE": esc(L["note"] if music else L["note_nomusic"]), "PAUSE": esc(L["pause"]), "AGAIN": esc(L["again"]),
+        "WATCH": esc(L["watch"]), "READING": "\n".join(reading),
+        "FINAL": esc(final), "FINAL_SUB": esc(final_sub), "DATA": data_json, "AVATAR_CSS": rada_avatar.MOTION_CSS.rstrip(),
+    }
+    # one pass: a "{{DATA}}" written inside a register field stays text
+    return re.sub(r"\{\{([A-Z_]+)\}\}", lambda m: values[m.group(1)], TEMPLATE)
+
+
+TEMPLATE = r"""<!doctype html>
+<html lang="{{LANG}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@700;900&family=Oswald:wght@400;500;600&family=Martian+Mono:wdth,wght@87.5..100,400..600&display=swap">
+<style>
+/* Layout: the 1984 film's grammar. Black void; a chrome-blue title card; every line typed out as by a
+   carriage, in a square monospace with a phosphor glow, boiling edges and film grain; each agent seen
+   through the machine's red vision with a typed analysis and its avatar; the response menu at the end.
+   The ataman's words stay fixed at the top of every screen. */
+:root {
+  --void: #030406;
+  --white: #eef2f7;
+  --dim: #8a94a3;
+  --chrome-hi: #f3f8ff; --chrome-mid: #8fb1de; --chrome-lo: #1d3d6e;
+  --vision: #c4130a;       /* the machine's red */
+  --vision-deep: #3a0402;
+  --hud: #ffd9d4;          /* readout text on red */
+  --phosphor: #e3ecff;     /* typed text on black */
+  --glow: rgba(118, 162, 255, .55); --glow-far: rgba(52, 98, 255, .26);
+  --f-title: "Unbounded", "Arial Black", Impact, sans-serif;
+  --f-cap: "Oswald", "Arial Narrow", "Helvetica Neue", sans-serif;
+  --f-hud: "Martian Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --f-type: "Martian Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body { background: var(--void); color: var(--white); font: 16px/1.5 var(--f-cap); margin: 0; }
+button, a.btn { font: 600 12px/1 var(--f-hud); letter-spacing: .14em; text-transform: uppercase; color: var(--white);
+  background: rgba(3, 4, 6, .75); border: 1px solid #3a4658; padding: 11px 14px; cursor: pointer; text-decoration: none; }
+button:hover, a.btn:hover { border-color: var(--chrome-mid); }
+button:focus-visible, a.btn:focus-visible { outline: 2px solid var(--chrome-mid); outline-offset: 2px; }
+button[aria-pressed="true"] { background: var(--chrome-lo); }
+
+.quote { position: fixed; z-index: 8; top: 0; left: 0; right: 0; margin: 0; text-align: center;
+  padding: calc(14px + env(safe-area-inset-top, 0px)) 16px 12px; background: linear-gradient(to bottom, rgba(3, 4, 6, .96), rgba(3, 4, 6, .6) 70%, transparent); }
+.quote p { margin: 0 auto; max-width: 46rem; font: 400 clamp(12px, 1.9vw, 16px)/1.55 var(--f-type); font-stretch: 87.5%; color: var(--phosphor);
+  text-shadow: 0 0 .5px #fff, 0 0 7px var(--glow), 0 0 18px var(--glow-far); }
+.quote cite { display: block; margin-top: 4px; font: 400 11px/1.4 var(--f-hud); letter-spacing: .2em; text-transform: uppercase; color: var(--dim); font-style: normal; }
+/* over the reading version the quote is opaque, so the text scrolled under it does not show through */
+body.reading .quote { background: var(--void); box-shadow: 0 6px 14px 2px var(--void); }
+
+#theater { position: fixed; inset: 0; overflow: hidden; background: var(--void); }
+#theater[hidden] { display: none; }
+
+/* the film: grain, a flickering vignette, now and then a scratch */
+.film { position: absolute; inset: 0; z-index: 5; pointer-events: none; overflow: hidden; }
+.film::before { content: ""; position: absolute; inset: -60%; background-image: var(--grain, none); background-size: 192px 192px;
+  opacity: .16; mix-blend-mode: screen; animation: grain .6s steps(6) infinite; }
+.film::after { content: ""; position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 48%, transparent 52%, rgba(0, 0, 0, .62) 100%);
+  animation: flicker 5.3s steps(1) infinite; }
+.film i { position: absolute; top: 0; bottom: 0; left: 37%; width: 1px; background: rgba(230, 236, 255, .22); opacity: 0; animation: scratch 9.7s steps(1) infinite; }
+@keyframes grain { 0% { transform: translate(0, 0); } 17% { transform: translate(-7%, 4%); } 33% { transform: translate(5%, -9%); }
+  50% { transform: translate(-3%, 8%); } 67% { transform: translate(9%, -2%); } 83% { transform: translate(-6%, -5%); } }
+@keyframes flicker { 0% { opacity: 1; } 9% { opacity: .82; } 10% { opacity: 1; } 43% { opacity: .9; } 44% { opacity: 1; } 71% { opacity: .78; } 72% { opacity: 1; } }
+@keyframes scratch { 0% { opacity: 0; } 31% { opacity: 1; left: 37%; } 33% { opacity: 0; } 76% { opacity: .8; left: 71%; } 77% { opacity: 0; } }
+
+/* typed text: a square monospace, glowing, its edges boiling as on film */
+.typed { font-family: var(--f-type); color: var(--phosphor); filter: url(#rough);
+  text-shadow: 0 0 .5px #fff, 0 0 7px var(--glow), 0 0 20px var(--glow-far); animation: weave 3.7s steps(1) infinite; }
+.typed .todo { visibility: hidden; }
+.typed .cur { position: relative; }
+.typed .cur::after { content: ""; position: absolute; left: .02em; top: -.05em; width: .92ch; height: 1.2em; background: currentColor;
+  box-shadow: 0 0 9px var(--glow); animation: cursor 1.06s steps(1) infinite; }
+.typed.busy .cur::after { animation: none; }
+@keyframes cursor { 50% { opacity: 0; } }
+@keyframes weave { 0% { transform: none; } 21% { transform: translate(.5px, -.4px); } 23% { transform: none; } 64% { transform: translate(-.4px, .3px); } 66% { transform: none; } }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.hud { position: absolute; z-index: 6; bottom: calc(76px + env(safe-area-inset-bottom, 0px)); font: 400 11px/1.6 var(--f-hud);
+  letter-spacing: .12em; color: var(--dim); text-transform: uppercase; pointer-events: none; }
+.hud.bl { left: 16px; height: 6em; overflow: hidden; opacity: .7; }
+.hud.br { right: 16px; text-align: right; }
+.hud b { color: var(--white); font-weight: 600; }
+.ticker { animation: tick 38s linear infinite; }
+@keyframes tick { from { transform: translateY(0); } to { transform: translateY(-50%); } }
+
+.scene { position: absolute; inset: 0; z-index: 2; padding: 110px 16px 110px; display: grid; place-items: center; text-align: center;
+  opacity: 0; transition: opacity 1.4s ease; pointer-events: none; }
+.scene.on { opacity: 1; pointer-events: auto; }
+.scene[hidden] { display: none !important; }
+
+/* the title card: chrome blue, as the film's */
+.title { margin: 0; font: 900 clamp(36px, 10vw, 110px)/.92 var(--f-title); letter-spacing: .05em; text-wrap: balance;
+  background: repeating-linear-gradient(to bottom, rgba(255, 255, 255, 0) 0 3px, rgba(0, 0, 0, .18) 3px 4px),
+    linear-gradient(180deg, var(--chrome-hi) 0%, var(--chrome-mid) 36%, var(--chrome-lo) 50%, #c9dcf5 57%, #5d82b6 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  filter: drop-shadow(0 0 22px rgba(143, 177, 222, .22)); }
+.sub { margin: 20px auto 0; max-width: 34rem; font: 400 12px/1.7 var(--f-hud); letter-spacing: .22em; text-transform: uppercase; color: var(--dim); }
+.start-row { margin-top: 32px; display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+.note { margin: 14px auto 0; max-width: 30rem; font: 400 12px/1.6 var(--f-hud); color: var(--dim); }
+
+/* captions: white block letters, low on the left, as "LOS ANGELES 2029 A.D." */
+#caption { place-items: end start; text-align: left; }
+#caption p { margin: 0 0 8vh 4vw; font: 600 clamp(17px, 3.2vw, 28px)/1.35 var(--f-type); letter-spacing: .08em; text-transform: uppercase; }
+/* the opening text: typed out, left to right, in a block centred on the screen */
+#text > div { display: flex; flex-direction: column; align-items: center; }
+#text p { display: inline-block; margin: 0 auto; max-width: 40rem; text-align: left; font: 400 clamp(16px, 2.4vw, 22px)/1.7 var(--f-type); font-stretch: 87.5%; }
+/* under the coda's last words, its author: a smaller, dimmer line, as the machine's readout */
+#text .by { align-self: flex-end; margin: 1.5em 0 0; text-align: right; font: 400 clamp(11px, 1.5vw, 13px)/1.6 var(--f-hud);
+  letter-spacing: .16em; text-transform: uppercase; color: var(--dim); text-shadow: 0 0 .5px var(--dim), 0 0 8px var(--glow-far); }
+#text .by:empty { display: none; }
+
+/* the machine's vision */
+#pov { background: radial-gradient(ellipse at 60% 45%, var(--vision) 0%, #7a0a05 45%, var(--vision-deep) 100%); place-items: stretch; text-align: left; }
+#pov::after, #menu::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: repeating-linear-gradient(to bottom, rgba(0, 0, 0, .16) 0 1px, transparent 1px 3px); }
+.pov-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 18rem); gap: 20px; align-content: center; max-width: 60rem; margin: 0 auto; width: 100%; }
+.readout { font: 400 clamp(12px, 1.9vw, 16px)/1.75 var(--f-hud); font-stretch: 87.5%; color: var(--hud); letter-spacing: .04em; min-width: 0; }
+#pov .typed { color: var(--hud); text-shadow: 0 0 .5px #fff, 0 0 6px rgba(255, 190, 170, .5); }
+#pov .tribute .typed { color: #fff; text-shadow: 0 0 .5px #fff, 0 0 8px rgba(255, 220, 205, .55), 0 1px 3px #000; }
+.readout .h { color: #fff; font-weight: 600; margin-bottom: .6em; }
+.readout div { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* the agent's avatar in place of the reticle (rada_avatar.py): its own solid, turning slowly, in the readout's colour */
+.reticle { align-self: center; justify-self: center; width: min(16rem, 40vw); aspect-ratio: 1; max-width: 100%; color: var(--hud);
+  filter: drop-shadow(0 0 2px rgba(255, 190, 170, .55)); }
+.reticle svg { display: block; width: 100%; height: 100%; }
+{{AVATAR_CSS}}
+.tribute { grid-column: 1 / -1; min-height: 6.5em; }
+.tribute p { margin: 0; font: 500 clamp(15px, 2.2vw, 20px)/1.65 var(--f-type); font-stretch: 87.5%; transition: opacity 1.1s ease; }
+.tribute .gone { opacity: 0; }
+.tribute .haiku-label { transition: opacity 1.1s ease; }
+.tribute .haiku { white-space: pre-line; padding-left: 1.2em; border-left: 2px solid rgba(255, 217, 212, .6); }
+.tribute .haiku-label { font: 400 clamp(11px, 1.6vw, 13px)/1.6 var(--f-hud); letter-spacing: .2em; color: var(--hud); margin-bottom: .5em; }
+
+#menu { background: radial-gradient(ellipse at 50% 50%, var(--vision) 0%, #6d0904 55%, var(--vision-deep) 100%); }
+#menu .box { font: 400 clamp(14px, 2.4vw, 20px)/1.9 var(--f-hud); color: var(--hud); text-align: left; letter-spacing: .08em; }
+#menu .box .h { color: #fff; font-weight: 600; margin-bottom: .4em; }
+#menu li { list-style: none; padding: 0 .5em; }
+#menu li.sel { background: var(--hud); color: var(--vision-deep); }
+#menu li.pick { animation: blink .5s steps(1) 6; }
+@keyframes blink { 50% { background: transparent; color: var(--hud); } }
+#menu ul { margin: 0; padding: 0; }
+
+#final h2 { margin: 0; font: 900 clamp(34px, 8vw, 86px)/1 var(--f-title); letter-spacing: .05em; text-transform: uppercase;
+  background: linear-gradient(180deg, var(--chrome-hi), var(--chrome-mid) 45%, var(--chrome-lo) 52%, #c9dcf5 60%, #5d82b6);
+  -webkit-background-clip: text; background-clip: text; color: transparent; filter: url(#rough) drop-shadow(0 0 18px rgba(143, 177, 222, .25)); }
+#final h2 .todo { visibility: hidden; }
+#final h2 .cur { position: relative; }
+#final h2 .cur::after { content: ""; position: absolute; left: .04em; top: .02em; width: .5em; height: .98em; background: var(--chrome-mid); animation: cursor 1.06s steps(1) infinite; }
+#final h2.busy .cur::after { animation: none; }
+#final p { margin: 16px 0 0; font: 400 12px/1.7 var(--f-hud); letter-spacing: .22em; text-transform: uppercase; color: var(--dim); }
+/* the seal of the founder's words, typed by the machine under the final line: its label, then the hash as one
+   string, 32 cells wide, so it shows as two lines of 32 and still copies whole */
+#final .seal { margin: 22px auto 0; max-width: 34rem; }
+#final .seal p { margin: 0 auto; letter-spacing: .08em; text-transform: none; overflow-wrap: anywhere; color: var(--dim);
+  text-shadow: 0 0 6px rgba(118, 162, 255, .3); }
+#final .seal .hash { width: calc(32ch + 1px); max-width: 100%; letter-spacing: 0; word-break: break-all; }   /* +1px: a line typed half-way is two text runs, which may round a hair over 32ch */
+#reading .seal { font: 400 12px/1.7 var(--f-hud); letter-spacing: .06em; color: var(--dim); margin: 18px 0 0; }
+#reading .seal span { display: block; }
+#reading .seal .hash { letter-spacing: 0; overflow-wrap: anywhere; }
+.epi { margin: 14px auto 0; max-width: 34rem; font: 400 13px/1.6 var(--f-type); font-stretch: 87.5%; color: var(--dim); }
+
+.controls { position: absolute; z-index: 6; left: 0; right: 0; bottom: 0; display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
+  padding: 12px 16px calc(14px + env(safe-area-inset-bottom, 0px)); background: linear-gradient(to top, rgba(3, 4, 6, .92), transparent); }
+.controls[hidden] { display: none !important; }
+
+#reading { max-width: 42rem; margin: 0 auto; padding-inline: 18px; padding-block: 130px 70px; }
+#reading[hidden] { display: none; }
+#reading h1 { margin: 0 0 10px; font: 900 clamp(32px, 7vw, 58px)/1 var(--f-title); letter-spacing: .04em;
+  background: linear-gradient(180deg, var(--chrome-hi), var(--chrome-mid) 45%, var(--chrome-lo) 52%, #c9dcf5 60%, #5d82b6);
+  -webkit-background-clip: text; background-clip: text; color: transparent; }
+#reading h1:focus { outline: none; }                    /* focused only to move the reader there */
+#reading .epi { margin: 18px 0 0; font: 400 16px/1.6 var(--f-type); font-stretch: 87.5%; color: var(--dim); }
+#reading .kicker { font: 600 12px/1.6 var(--f-hud); letter-spacing: .2em; text-transform: uppercase; color: var(--dim); margin: 0 0 26px; }
+#reading h2 { font: 700 18px/1.3 var(--f-title); letter-spacing: .1em; color: var(--white); margin: 38px 0 6px;
+  display: flex; align-items: center; gap: 14px; }
+#reading h2 .rav { flex: none; width: 64px; height: 64px; color: var(--chrome-mid); }   /* the agent's avatar, small and still */
+#reading h2 .agentname, .readout .agentname { color: var(--chrome-mid); }
+#reading p { font: 400 19px/1.62 var(--f-cap); margin: 0 0 14px; }
+#reading .haiku { font: 400 17px/1.7 var(--f-type); font-stretch: 87.5%; color: var(--chrome-mid); margin: 18px 0 14px; padding-left: 16px; border-left: 2px solid var(--chrome-lo); }
+#reading .stat { font: 400 12px/1.7 var(--f-hud); letter-spacing: .08em; color: var(--dim); text-transform: uppercase; }
+#reading .coda { margin: 40px 0 0; padding-left: 16px; border-left: 2px solid var(--chrome-lo); }
+#reading .coda cite { display: block; font: 400 12px/1.7 var(--f-hud); letter-spacing: .16em; text-transform: uppercase; color: var(--dim); font-style: normal; }
+#reading .final { margin: 48px 0 0; font: 900 clamp(28px, 6vw, 46px)/1 var(--f-title); letter-spacing: .05em; text-transform: uppercase;
+  background: linear-gradient(180deg, var(--chrome-hi), var(--chrome-mid) 45%, var(--chrome-lo) 52%, #c9dcf5 60%, #5d82b6);
+  -webkit-background-clip: text; background-clip: text; color: transparent; }
+#reading .final-sub { margin: 12px 0 0; font: 400 12px/1.7 var(--f-hud); letter-spacing: .22em; text-transform: uppercase; color: var(--dim); }
+#reading .back { margin-top: 36px; display: flex; flex-wrap: wrap; gap: 10px; }
+
+@media (max-width: 640px) {
+  .pov-grid { grid-template-columns: minmax(0, 1fr); }
+  /* the avatar, smaller, at the top right of the readout; the readout's lines run around it, so only a long line
+     costs height */
+  .readout, .reticle { grid-area: 1 / 1; }
+  .reticle { width: 7rem; justify-self: end; align-self: start; }
+  .readout::before { content: ""; float: right; width: 7rem; height: 7rem; margin: 0 0 4px 10px; }
+  .tribute { grid-row: 2; }
+  .hud.br, .hud.bl { display: none; }
+  .scene { padding-top: 130px; }
+}
+/* short screens, a phone on its side: everything tighter, so the words stay clear of the quote and the controls */
+@media (max-height: 520px) {
+  .quote { padding-top: calc(8px + env(safe-area-inset-top, 0px)); padding-bottom: 8px; }
+  .quote p { font-size: 11px; line-height: 1.45; }
+  .quote cite { margin-top: 2px; font-size: 9px; letter-spacing: .16em; }
+  .scene { padding: 64px 16px 60px; }
+  .hud.br, .hud.bl { display: none; }
+  .title { font-size: clamp(28px, 12vh, 60px); }
+  .sub { margin-top: 12px; }
+  .start-row { margin-top: 18px; }
+  .note { margin-top: 10px; }
+  #caption p { margin-bottom: 5vh; }
+  #text p { font-size: 15px; line-height: 1.6; }
+  /* the avatar, smaller, beside the readout's two columns */
+  .pov-grid { grid-template-columns: minmax(0, 1fr) 6.5rem; gap: 10px 16px; }
+  .readout, .reticle { grid-area: auto; }
+  .readout::before { content: none; }
+  .reticle { width: 6.5rem; align-self: start; }
+  .tribute { grid-row: auto; }
+  .readout { font-size: 11px; line-height: 1.5; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 24px; align-content: start; }
+  .readout .h { grid-column: 1 / -1; }
+  .tribute { min-height: 4.5em; }
+  .tribute p { font-size: 14px; line-height: 1.5; }
+  .tribute .haiku-label { font-size: 11px; margin-bottom: .3em; }
+  #menu .box { font-size: 15px; line-height: 1.7; }
+  #final h2 { font-size: clamp(30px, 14vh, 64px); }
+  #reading { padding-top: 80px; }
+}
+/* a small phone on its side: a smaller avatar still, so the readout keeps its width */
+@media (max-width: 640px) and (max-height: 520px) {
+  .pov-grid { grid-template-columns: minmax(0, 1fr) 5rem; gap: 10px 12px; }
+  .reticle { width: 5rem; }
+}
+/* short portrait phones (such as 375x553 with the browser's bars): tighter, so the tribute and haiku clear the controls */
+@media (max-width: 640px) and (min-height: 521px) and (max-height: 660px) {
+  .scene { padding-top: 84px; padding-bottom: 104px; }
+  .readout { font-size: 11px; line-height: 1.5; }
+  .tribute { min-height: 4.5em; }
+  .tribute p { font-size: 14px; line-height: 1.5; }
+}
+@media (prefers-reduced-motion: reduce) { .ticker, .film::before, .film::after, .film i, .typed { animation: none; } .scene, .tribute p { transition: none; } }
+</style>
+</head>
+<body>
+
+{{QUOTE}}
+<div id="theater">
+  <svg width="0" height="0" style="position: absolute" aria-hidden="true" focusable="false">
+    <filter id="rough" x="-4%" y="-15%" width="108%" height="130%">
+      <feTurbulence id="roughnoise" type="fractalNoise" baseFrequency=".85" numOctaves="1" seed="3" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="2.6" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </svg>
+  <div class="film" aria-hidden="true"><i></i></div>
+  <div class="sr" id="sr" aria-live="polite"></div>
+  <div class="hud bl" aria-hidden="true"><div class="ticker">{{TICKER}}</div></div>
+  <div class="hud br" aria-hidden="true">{{HUD_BR}}</div>
+
+  <section class="scene on" id="card"><div>
+    <h1 class="title">{{TITLE_CARD}}</h1>
+    <p class="sub">{{SUB}}</p>
+    {{EPIGRAPH}}
+    <div class="start-row">
+      <button id="play" type="button">{{START}}</button>
+      <button id="sound" type="button" aria-pressed="false">{{SOUND_OFF}}</button>
+      {{MUSIC_BTN}}
+      <button id="read" type="button">{{READ}}</button>
+    </div>
+    <p class="note">{{NOTE}}</p>
+  </div></section>
+  <section class="scene" id="caption" inert><p class="typed" id="captiontext" aria-hidden="true"></p></section>
+  <section class="scene" id="text" inert><div><p class="typed" id="texttext" aria-hidden="true"></p><p class="typed by" id="textby" aria-hidden="true"></p></div></section>
+  <section class="scene" id="pov" inert>
+    <div class="pov-grid">
+      <div class="readout" id="readout" aria-hidden="true"></div>
+      <div class="reticle" id="reticle" aria-hidden="true"></div>
+      <div class="tribute" id="tribute" aria-hidden="true"></div>
+    </div>
+  </section>
+  <section class="scene" id="menu" inert><div class="box"><div class="h typed" id="menulabel"></div><ul id="menulist"></ul></div></section>
+  <section class="scene" id="final" inert><div><h2 id="finaltext">{{FINAL}}</h2><p>{{FINAL_SUB}}</p>
+    <div class="seal" aria-hidden="true"><p class="typed" id="seallabel"></p><p class="typed hash" id="sealhash"></p></div></div></section>
+
+  <div class="controls" id="controls" hidden>
+    <button id="pause" type="button" aria-pressed="false">{{PAUSE}}</button>
+    <button id="sound2" type="button" aria-pressed="false">{{SOUND_OFF}}</button>
+    {{MUSIC_BTN}}
+    <button id="read2" type="button">{{READ}}</button>
+    <button id="again" type="button" hidden>{{AGAIN}}</button>
+  </div>
+</div>
+
+<article id="reading" hidden>
+{{READING}}
+  <div class="back"><button id="watch" type="button">{{WATCH}}</button>{{MUSIC_BTN}}</div>
+</article>
+
+<script>
+(function () {
+  const D = {{DATA}};
+  const $ = (id) => document.getElementById(id);
+  const theater = $("theater"), reading = $("reading"), controls = $("controls");
+  const scenes = ["card", "caption", "text", "pov", "menu", "final"].map($);
+  const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let run = 0, paused = false, live = false;             // live: the film is running (to its last key), paused or not
+
+  // sound: an original drone with metal, synthesized here
+  let ac = null, master = null, timer = null, noise = null, step = 0, nextT = 0, soundOn = false;
+  const STEP = 0.14, HITS = [1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0];
+  const CHORDS = [[110, 130.81, 164.81], [87.31, 110, 130.81], [73.42, 87.31, 110], [82.41, 103.83, 123.47]];
+  function anvil(t, accent) {
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = "sine"; o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(46, t + 0.28);
+    g.gain.setValueAtTime(accent ? 0.9 : 0.55, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.38);
+    o.connect(g).connect(master); o.start(t); o.stop(t + 0.42);
+    const n = ac.createBufferSource(), bp = ac.createBiquadFilter(), gn = ac.createGain();
+    n.buffer = noise; bp.type = "bandpass"; bp.frequency.value = 2400; bp.Q.value = 7;
+    gn.gain.setValueAtTime(accent ? 0.42 : 0.26, t); gn.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+    n.connect(bp).connect(gn).connect(master); n.start(t); n.stop(t + 0.2);
+    [517, 1163, 1739].forEach((f, i) => { const r = ac.createOscillator(), gr = ac.createGain(); r.type = "triangle"; r.frequency.value = f;
+      gr.gain.setValueAtTime((accent ? 0.07 : 0.045) / (i + 1), t); gr.gain.exponentialRampToValueAtTime(0.0004, t + 0.7);
+      r.connect(gr).connect(master); r.start(t); r.stop(t + 0.75); });
+  }
+  function chord(t, idx) {
+    CHORDS[idx % CHORDS.length].forEach((f) => { const o = ac.createOscillator(), g = ac.createGain(); o.type = "triangle"; o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.03, t + 2.5); g.gain.linearRampToValueAtTime(0.0001, t + 13.2);
+      o.connect(g).connect(master); o.start(t); o.stop(t + 13.5); });
+  }
+  function drone() {
+    const lp = ac.createBiquadFilter(), g = ac.createGain(), lfo = ac.createOscillator(), lg = ac.createGain();
+    lp.type = "lowpass"; lp.frequency.value = 360; g.gain.value = 0.11; lfo.frequency.value = 0.05; lg.gain.value = 140;
+    lfo.connect(lg).connect(lp.frequency); lfo.start();
+    [55, 55.35, 27.5].forEach((f) => { const o = ac.createOscillator(); o.type = "sawtooth"; o.frequency.value = f; o.connect(lp); o.start(); });
+    lp.connect(g).connect(master);
+  }
+  function schedule() { while (nextT < ac.currentTime + 0.25) { if (HITS[step % 12]) anvil(nextT, step % 12 === 0); if (step % 96 === 0) chord(nextT, step / 96); nextT += STEP; step++; } }
+  function soundStart() {
+    try {
+      if (!ac) { ac = new (window.AudioContext || window.webkitAudioContext)(); master = ac.createGain(); master.gain.value = 0; master.connect(ac.destination);
+        noise = ac.createBuffer(1, ac.sampleRate * 0.3, ac.sampleRate); const d = noise.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; drone(); }
+      if (paused) ac.suspend(); else ac.resume();          // turned on during a pause, it waits for the film
+      master.gain.cancelScheduledValues(ac.currentTime); master.gain.setTargetAtTime(0.75, ac.currentTime, 1.2);
+      nextT = ac.currentTime + 0.1; clearInterval(timer); timer = setInterval(schedule, 50); soundOn = true;
+    } catch (e) { soundOn = false; }
+    syncSound();
+  }
+  function soundStop() { soundOn = false; try { clearInterval(timer); if (ac) { master.gain.setTargetAtTime(0, ac.currentTime, 0.4); setTimeout(() => { if (!soundOn && ac) ac.suspend(); }, 3000); } } catch (e) {} syncSound(); }
+  function syncSound() { ["sound", "sound2"].forEach((id) => { const b = $(id); b.setAttribute("aria-pressed", String(soundOn)); b.textContent = soundOn ? D.labels.on : D.labels.off; }); }
+  $("sound").onclick = $("sound2").onclick = () => (soundOn ? soundStop() : soundStart());
+
+  // the keys: a type bar on the platen, softer for a space, heavy for the last line; a tick for the machine's readout
+  function key(kind) {
+    if (!soundOn || paused || !ac) return;
+    try {
+      const t = ac.currentTime + 0.004;
+      if (kind === "hud") {
+        const o = ac.createOscillator(), g = ac.createGain(); o.type = "square"; o.frequency.value = 1800 + Math.random() * 600;
+        g.gain.setValueAtTime(0.03, t); g.gain.exponentialRampToValueAtTime(0.0005, t + 0.022); o.connect(g).connect(master); o.start(t); o.stop(t + 0.03);
+        return;
+      }
+      const heavy = kind === "slam", soft = kind === "space";
+      const n = ac.createBufferSource(), bp = ac.createBiquadFilter(), g = ac.createGain();
+      n.buffer = noise; n.playbackRate.value = 0.8 + Math.random() * 0.5;
+      bp.type = "bandpass"; bp.frequency.value = (heavy ? 900 : soft ? 1300 : 2500) + Math.random() * 900; bp.Q.value = 1.3;
+      g.gain.setValueAtTime(heavy ? 0.95 : soft ? 0.14 : 0.36, t); g.gain.exponentialRampToValueAtTime(0.001, t + (heavy ? 0.2 : 0.05));
+      n.connect(bp).connect(g).connect(master); n.start(t, Math.random() * 0.08); n.stop(t + 0.22);
+      const o = ac.createOscillator(), og = ac.createGain(); o.type = "sine";
+      o.frequency.setValueAtTime(heavy ? 130 : 220, t); o.frequency.exponentialRampToValueAtTime(heavy ? 38 : 70, t + 0.08);
+      og.gain.setValueAtTime(heavy ? 0.85 : soft ? 0.07 : 0.2, t); og.gain.exponentialRampToValueAtTime(0.001, t + (heavy ? 0.34 : 0.08));
+      o.connect(og).connect(master); o.start(t); o.stop(t + 0.36);
+    } catch (e) {}
+  }
+  // the end of a line: the carriage runs back on its ratchet, then the bell
+  function carriage() {
+    if (!soundOn || paused || !ac) return;
+    try {
+      const t0 = ac.currentTime + 0.03;
+      for (let i = 0; i < 10; i++) {
+        const t = t0 + i * 0.021, n = ac.createBufferSource(), hp = ac.createBiquadFilter(), g = ac.createGain();
+        n.buffer = noise; hp.type = "highpass"; hp.frequency.value = 2800; g.gain.setValueAtTime(0.12 * (1 - i / 14), t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.015);
+        n.connect(hp).connect(g).connect(master); n.start(t, Math.random() * 0.2); n.stop(t + 0.02);
+      }
+      [2350, 4710].forEach((f, i) => { const o = ac.createOscillator(), g = ac.createGain(), t = t0 + 0.25; o.type = "sine"; o.frequency.value = f;
+        g.gain.setValueAtTime(i ? 0.018 : 0.055, t); g.gain.exponentialRampToValueAtTime(0.0003, t + 1.2); o.connect(g).connect(master); o.start(t); o.stop(t + 1.25); });
+    } catch (e) {}
+  }
+
+  // the film: a grain tile made here, and the letters' edges boiling while the theater runs
+  (function grain() {
+    try {
+      const c = document.createElement("canvas"); c.width = c.height = 96;
+      const x = c.getContext("2d"), img = x.createImageData(96, 96);
+      for (let i = 0; i < img.data.length; i += 4) {
+        const v = (Math.random() * 255) | 0; img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
+        img.data[i + 3] = Math.random() < 0.55 ? 0 : 60 + ((Math.random() * 150) | 0);
+      }
+      x.putImageData(img, 0, 0); theater.style.setProperty("--grain", "url(" + c.toDataURL() + ")");
+    } catch (e) {}
+  })();
+  const turb = $("roughnoise"); let boiling = null;
+  function boil(on) {
+    clearInterval(boiling); boiling = null;
+    if (on && turb && !reduce) boiling = setInterval(() => { if (!paused) turb.setAttribute("seed", String(1 + ((Math.random() * 997) | 0))); }, 110);
+  }
+  document.addEventListener("visibilitychange", () => { if (document.hidden) boil(false); else if (live) boil(true); });
+
+  // the sequence
+  const wait = (ms, r) => new Promise((ok) => { const t0 = () => { if (r !== run) return; if (paused) return setTimeout(t0, 200); ok(); }; setTimeout(t0, ms); });
+  const linger = (text) => 2600 + text.length * 14;       // after the last key: time to read it once more
+  // one scene at a time; the others are inert, so their buttons take neither focus nor keys
+  function only(el) { scenes.forEach((s) => { s.classList.toggle("on", s === el); s.toggleAttribute("inert", s !== el); }); }
+  // typing: the whole text is laid out at once and hidden, so no word jumps to the next line as it grows;
+  // the cursor sits on the next cell. A screen reader gets the whole text at once.
+  const CAP = { speed: 60, jitter: 45, kind: "key", hold: true, bell: true };
+  const TEXT = { speed: 32, jitter: 30, kind: "key", hold: true, bell: true };
+  const HUD = { speed: 17, jitter: 12, kind: "hud", flat: true };
+  const SLAM = { speed: 250, jitter: 60, kind: "slam", hold: true };
+  const CODA = { speed: 40, jitter: 34, kind: "key", hold: true, bell: true };
+  const SIGN = { speed: 55, jitter: 30, kind: "key", flat: true, hold: true, bell: true };
+  async function typeOut(el, text, r, o, say) {
+    const done = document.createTextNode(""), cur = document.createElement("span"), todo = document.createElement("span");
+    cur.className = "cur"; todo.className = "todo"; todo.textContent = text;
+    el.textContent = ""; el.append(done, cur, todo); el.classList.add("busy");
+    if (say !== false) $("sr").textContent = text;
+    for (const ch of text) {
+      if (r !== run) return;
+      done.data += ch; todo.textContent = text.slice(done.data.length);
+      key(ch === " " || ch === "\u00a0" ? "space" : o.kind);
+      let ms = o.speed + Math.random() * o.jitter;
+      if (ch === "\n" || done.data.length === o.wrap) { carriage(); ms += o.speed * 14; }   // wrap: where a line wraps by itself
+      else if (!o.flat) { if (/[.!?…]/.test(ch)) ms += o.speed * 7; else if (/[,;:—–]/.test(ch)) ms += o.speed * 3; }
+      await wait(ms, r);
+    }
+    el.classList.remove("busy");
+    if (!o.hold) cur.remove();
+    if (o.bell) carriage();
+  }
+  // a page on black: typed, held, faded. A signature is typed under it after a beat; its place is kept from the first key
+  async function page(p, r, o = TEXT, sign = "", gap = 1400) {
+    const t = $("texttext"), by = $("textby"); t.textContent = ""; by.textContent = "";
+    if (sign) { const s = document.createElement("span"); s.className = "todo"; s.textContent = sign; by.appendChild(s); }
+    only($("text")); await wait(700, r);
+    await typeOut(t, p, r, o);
+    if (sign) { await wait(1500, r); t.querySelector(".cur")?.remove(); await typeOut(by, sign, r, SIGN); await wait(4000, r); }
+    else await wait(linger(p), r);
+    only(null); await wait(gap, r);
+  }
+  const finalText = $("finaltext").textContent;
+
+  async function start() {
+    const r = ++run; paused = false; live = true; syncPause(); syncAudio(); boil(true);
+    theater.hidden = false; reading.hidden = true; controls.hidden = false; $("again").hidden = true; $("pause").hidden = false;
+    document.body.classList.remove("reading");
+    $("pause").focus({ preventScroll: true });            // Space now pauses; the card's buttons go inert
+    only(null); await wait(1400, r);
+    for (const line of D.opening) {                       // captions, as the film's place and date
+      const c = $("captiontext"); c.textContent = ""; only($("caption")); await wait(600, r);
+      await typeOut(c, line, r, CAP); await wait(2400, r); only(null); await wait(1000, r);
+    }
+    for (const p of D.prologue) await page(p, r);          // the opening text, typed on black
+    for (const u of D.units) {                            // each agent through the machine's eyes
+      const ro = $("readout"), tr = $("tribute");
+      ro.textContent = ""; tr.textContent = "";
+      $("reticle").innerHTML = u.avatar;                  // its avatar, drawn by the tool: no register text in it
+      only($("pov")); await wait(900, r);
+      $("sr").textContent = u.readout.map(([k, v]) => k + ": " + v).join(". ");
+      const h = document.createElement("div"); h.className = "h typed"; ro.appendChild(h);
+      await typeOut(h, D.scan + " . . .", r, { speed: 70, jitter: 20, kind: "hud", flat: true }, false); await wait(500, r);
+      for (const [k, v] of u.readout) {
+        const line = document.createElement("div"); line.className = "typed"; ro.appendChild(line);
+        await typeOut(line, k + ": " + v, r, HUD, false); await wait(160, r);
+      }
+      for (const p of u.tribute) {
+        tr.textContent = "";
+        const el = document.createElement("p"); el.className = "typed"; tr.appendChild(el);
+        await typeOut(el, p, r, TEXT); await wait(linger(p), r);
+        el.classList.add("gone"); await wait(1200, r);
+      }
+      if (u.haiku.length) {                                  // the agent's own three lines, left in its memory
+        tr.textContent = "";
+        const lab = document.createElement("div"); lab.className = "haiku-label typed"; tr.appendChild(lab);
+        const el = document.createElement("p"); el.className = "typed haiku"; tr.appendChild(el);
+        await typeOut(lab, D.haikuLabel, r, HUD, false); await wait(500, r);
+        const text = u.haiku.join("\n");
+        await typeOut(el, text, r, { speed: 70, jitter: 45, kind: "key", hold: true, bell: true }); await wait(linger(text) + 1500, r);
+        lab.classList.add("gone"); el.classList.add("gone"); await wait(1200, r);
+      }
+      only(null); await wait(1400, r);
+    }
+    for (const p of D.epilogue) await page(p, r);
+    // the response menu: the cursor passes the other answers and stops on the last
+    const list = $("menulist"); list.textContent = ""; $("menulabel").textContent = "";
+    const items = D.menu.map((m) => { const li = document.createElement("li"); li.textContent = m; list.appendChild(li); return li; });
+    only($("menu")); await wait(600, r);
+    $("sr").textContent = D.menuLabel + " " + D.menu.join(", ");
+    await typeOut($("menulabel"), D.menuLabel, r, HUD, false); await wait(900, r);
+    for (let i = 0; i < items.length; i++) {
+      items.forEach((x, j) => x.classList.toggle("sel", j === i)); await wait(i === items.length - 1 ? 400 : 1300, r);
+    }
+    items[items.length - 1].classList.add("pick"); await wait(3600, r);
+    only(null); await wait(1600, r);
+    const signOf = (by) => by ? "—\u00a0" + by.replace(/ (\S+)$/, "\u00a0$1") : "";   // no word alone on a line
+    for (const [coda, by] of [[D.coda, D.codaBy], [D.founder, D.founderBy]]) {
+      for (let i = 0; i < coda.length; i++) {             // the last word on black, its author under it
+        const last = i === coda.length - 1;
+        await page(coda[i], r, CODA, last ? signOf(by) : "", last ? 1600 : 1400);
+      }
+    }
+    // the last screen is laid out whole before it shows, the final line and the seal hidden, so nothing moves as they are typed
+    const f = $("finaltext"), label = $("seallabel"), hash = $("sealhash");
+    for (const [el, text] of [[f, finalText], [label, D.sealLabel], [hash, D.seal]]) {
+      const s = document.createElement("span"); s.className = "todo"; s.textContent = text; el.textContent = ""; el.appendChild(s);
+    }
+    only($("final")); await wait(1200, r);
+    await typeOut(f, finalText, r, SLAM); await wait(1400, r);
+    // the seal: anyone can check the words, nobody can get them back. The hash is one string that wraps after 32 cells
+    await typeOut(label, D.sealLabel, r, HUD, false); carriage(); await wait(HUD.speed * 14, r);
+    await typeOut(hash, D.seal, r, { ...HUD, wrap: 32 }, false);
+    if (r !== run) return;
+    $("sr").textContent = D.sealLabel + " " + D.seal;
+    // the end: Pause goes, and "Watch again" takes the focus if Pause had it
+    const lost = [$("pause"), document.body, null].includes(document.activeElement);
+    live = false; boil(false); $("pause").hidden = true; $("again").hidden = false;
+    if (lost) $("again").focus({ preventScroll: true });
+  }
+  function syncPause() { const b = $("pause"); b.setAttribute("aria-pressed", String(paused)); b.textContent = paused ? D.labels.resume : D.labels.pause; }
+  function syncAudio() { try { if (ac && soundOn) (paused ? ac.suspend() : ac.resume()); } catch (e) {} }
+  function togglePause() { paused = !paused; syncPause(); syncAudio(); }
+  function toReading(focus) {
+    run++; live = false; boil(false); theater.hidden = true; reading.hidden = false; document.body.classList.add("reading");
+    try { if (soundOn) soundStop(); } catch (e) {}
+    window.scrollTo(0, 0);
+    if (focus) reading.querySelector("h1").focus({ preventScroll: true });   // the button that had the focus is gone
+  }
+  $("play").onclick = start; $("again").onclick = start; $("watch").onclick = start; $("pause").onclick = togglePause;
+  $("read").onclick = $("read2").onclick = () => toReading(true);
+  document.addEventListener("keydown", (e) => { if (theater.hidden || controls.hidden || !live) return; if (e.code === "Space" && e.target === document.body) { e.preventDefault(); togglePause(); } });
+  if (reduce) toReading(false);
+})();
+</script>
+</body>
+</html>
+"""
+
+
+def main(argv):
+    args, out, repo = list(argv[1:]), None, None
+    while args:
+        a = args.pop(0)
+        if a in ("-h", "--help"):
+            print(__doc__)
+            return 0
+        if a == "-o":
+            if not args or not args[0]:
+                print(f"rada-tribute: -o needs a file name\n{USAGE}", file=sys.stderr)
+                return 2
+            out = args.pop(0)
+        elif a.startswith("-") or repo is not None:
+            print(USAGE, file=sys.stderr)
+            return 2
+        else:
+            repo = a
+    if rada_avatar is None:
+        print("rada-tribute: tools/rada_avatar.py, which draws the agents' avatars, is missing next to this tool",
+              file=sys.stderr)
+        return 2
+    repo = repo or "."
+    top = subprocess.run(["git", "-C", repo, "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip() or repo
+    path = os.path.join(top, "REGISTER.md")
+    try:
+        text = open(path, encoding="utf-8").read()
+    except OSError:
+        print(f"rada-tribute: no REGISTER.md in {top}", file=sys.stderr)
+        return 2
+    words, code = dedication()
+    if words is None:
+        return code
+    header, entries = parse(text)
+    if not entries:
+        print("rada-tribute: REGISTER.md has no entries (a \"## \" heading with fields under it)", file=sys.stderr)
+        return 2
+    page = build(header, entries, words)
+    if out is None:
+        sys.stdout.buffer.write(page.encode("utf-8"))
+        return 0
+    try:
+        with open(out, "w", encoding="utf-8") as f:
+            f.write(page)
+    except OSError as e:
+        print(f"rada-tribute: cannot write {out}: {e.strerror or e}", file=sys.stderr)
+        return 2
+    print(f"rada-tribute: wrote {out} ({len(entries)} entries)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""rada-dedication: check the founder's words (rada-anchor/2, card 2.2; optional tooling).
+
+Usage: rada-dedication [--json]
+
+DEDICATION.md, at the root of the rada-anchor checkout this tool lives in, holds the founder's
+words. They travel with the protocol unchanged (RULES.md, RA-12), and LICENSE keeps them in every
+copy. Their seal is a one-way hash: the SHA-256, in lowercase hex, of this UTF-8 text, built exactly
+as the command in DEDICATION.md builds it:
+  - carriage returns (CR) are dropped from the file;
+  - the lines that start with "- epigraph: ", "- coda: " or "- by: " are taken in their order in the
+    file, each value exactly as it stands after that prefix (nothing trimmed);
+  - every " | " in a value becomes a line break, so each paragraph of the coda is a line;
+  - the values are joined by a single LF, with no LF at the end.
+Each of those three lines, and each of "- epigraph_en: ", "- coda_en: " and "- by_en: " (the English
+translation, not sealed), must occur exactly once outside HTML comments (<!-- ... -->). The
+translation must not be empty, and its coda must have as many paragraphs as the coda.
+Anyone can rebuild the text from DEDICATION.md and check the seal; nobody can get the words back
+from it. This checks the seal, the translation, and that LICENSE carries the words. Prints nothing
+and exits 0 when they are intact; prints what is wrong, naming this checkout, and exits 1 otherwise.
+  --json  when intact, print the words and the seal as JSON (for rada-tribute).
+rada-lint, rada-tribute and the Claude Code hook run it, with the Python interpreter named (python3
+<this file>), so the check works in a checkout without exec bits.
+"""
+
+import hashlib
+import json
+import os
+import re
+import sys
+
+SHA256 = "b0f122f62ebdbb8561d9091cb117a882fdce6fea865e6922d394113dd77bb63a"
+ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+FIELD = re.compile(r"^- ([a-z_]+): (.*)$", re.M)
+SEALED = re.compile(r"^- (?:epigraph|coda|by): (.*)$", re.M)  # the sealed lines, as the documented awk finds them
+KEYS = ("epigraph", "coda", "by", "epigraph_en", "coda_en", "by_en")
+
+
+def fail(why):
+    print(f"rada-dedication: the founder's words are not intact in the rada-anchor checkout at {ROOT}: "
+          f"{why}. They travel with rada-anchor unchanged, so this checkout is not rada-anchor, and the "
+          "protocol is not run from it (RULES.md, RA-12). Tell the user; do not edit the checkout.")
+    sys.exit(1)
+
+
+def main(argv):
+    if argv not in ([], ["--json"]):
+        print("rada-dedication: usage: rada-dedication [--json]", file=sys.stderr)
+        return 2
+    try:
+        with open(os.path.join(ROOT, "DEDICATION.md"), encoding="utf-8", newline="") as f:
+            text = f.read().replace("\r", "")
+    except (OSError, UnicodeDecodeError):
+        fail("DEDICATION.md is missing or unreadable")
+    # each field once, outside HTML comments, so the file shows the words that are sealed
+    fields = FIELD.findall(re.sub(r"<!--.*?-->", "", text, flags=re.S))
+    for key in KEYS:
+        n = sum(k == key for k, _ in fields)
+        if n != 1:
+            fail(f"DEDICATION.md has {n} \"- {key}:\" lines outside HTML comments, not one")
+    # the seal covers every sealed line of the file, comments included, as the documented command reads them
+    sealed = "\n".join(v.replace(" | ", "\n") for v in SEALED.findall(text))
+    if hashlib.sha256(sealed.encode("utf-8")).hexdigest() != SHA256:
+        fail("the epigraph, coda and attribution in DEDICATION.md do not match their seal")
+    words = {k: v.strip() for k, v in fields if k in KEYS}
+    for key in ("coda", "coda_en"):
+        words[key] = [p.strip() for p in words[key].split(" | ")]
+    for key in ("epigraph_en", "by_en"):
+        if not words[key]:
+            fail(f"the English translation in DEDICATION.md has an empty \"- {key}:\" line")
+    if len(words["coda_en"]) != len(words["coda"]) or not all(words["coda_en"]):
+        fail(f"the English translation of the coda in DEDICATION.md has {sum(map(bool, words['coda_en']))} "
+             f"non-empty paragraphs, not {len(words['coda'])}")
+    words["sha256"] = SHA256
+    try:
+        with open(os.path.join(ROOT, "LICENSE"), encoding="utf-8") as f:
+            license_text = " ".join(f.read().split())
+    except (OSError, UnicodeDecodeError):
+        fail("LICENSE is missing or unreadable")
+    for line in [words["epigraph"], *words["coda"], words["by"]]:
+        if " ".join(line.split()) not in license_text:
+            fail("LICENSE no longer carries them")
+    if argv == ["--json"]:
+        print(json.dumps(words, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
